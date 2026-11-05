@@ -212,13 +212,12 @@ local function UpdateAimbot()
     end
 end
 
-UserInputService.TouchBegan:Connect(function(_, processed)
+UserInputService.TouchStarted:Connect(function(_, processed)
     if processed then return end
     AimbotActive = true
 end)
 
-UserInputService.TouchEnded:Connect(function(_, processed)
-    if processed then return end
+UserInputService.TouchEnded:Connect(function()
     AimbotActive = false
 end)
 
