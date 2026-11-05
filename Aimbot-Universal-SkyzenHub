@@ -11,10 +11,10 @@ local LocalPlayer = Players.LocalPlayer
 ------------------------------------------------------------
 local CONFIG = {
     ENABLED = true,
-    ESP_ENABLED = true,
-    AIMBOT_ENABLED = true,
+    ESP_ENABLED = false,
+    AIMBOT_ENABLED = false,
     TEAM_CHECK = true,
-    DRAW_LINES = true,
+    DRAW_LINES = false,
 
     AIM_DISTANCE = 120,
     AIM_SENSITIVITY = 0.12,
@@ -91,13 +91,14 @@ local function CreateESPLabel(player)
     local label = Instance.new("TextLabel")
     label.Name = "ESP_" .. player.Name
     label.Size = UDim2.new(0, 120, 0, 18)
-    label.BackgroundTransparency = 0.3
+    label.AnchorPoint = Vector2.new(0.5, 1)
+    label.BackgroundTransparency = 0.4
     label.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
     label.TextColor3 = Color3.fromRGB(255, 255, 255)
     label.TextSize = 12
     label.Font = Enum.Font.GothamBold
-    label.BorderSizePixel = 1
-    label.BorderColor3 = Color3.fromRGB(255, 255, 255)
+    label.BorderSizePixel = 0
+    label.Visible = false
     label.Parent = gui
     return label
 end
@@ -109,6 +110,10 @@ local function UpdateESP()
         end
         ESPLabels = {}
         return
+    end
+
+    for _, label in pairs(ESPLabels) do
+        label.Visible = false
     end
 
     for _, player in ipairs(Players:GetPlayers()) do
@@ -130,11 +135,9 @@ local function UpdateESP()
                         label.Position = UDim2.new(screenPos.X / Camera.ViewportSize.X, 0, screenPos.Y / Camera.ViewportSize.Y, 0)
 
                         if IsEnemy(player) then
-                            label.BackgroundColor3 = CONFIG.ESP_COLOR_ENEMY
-                            label.TextColor3 = Color3.fromRGB(255, 150, 150)
+                            label.TextColor3 = CONFIG.ESP_COLOR_ENEMY
                         else
-                            label.BackgroundColor3 = CONFIG.ESP_COLOR_FRIEND
-                            label.TextColor3 = Color3.fromRGB(150, 255, 150)
+                            label.TextColor3 = CONFIG.ESP_COLOR_FRIEND
                         end
                         label.Text = player.Name .. " (" .. tostring(math.floor(distance)) .. ")"
                     else
@@ -152,8 +155,16 @@ local function UpdateESP()
     end
 end
 
+local function ClearLine()
+    local g = LocalPlayer.PlayerGui:FindFirstChild("LineGui")
+    if g then g:ClearAllChildren() end
+end
+
 local function DrawLineToTarget(targetPosition)
-    if not CONFIG.DRAW_LINES or not targetPosition then return end
+    if not CONFIG.DRAW_LINES or not targetPosition then
+        ClearLine()
+        return
+    end
 
     local gui = LocalPlayer.PlayerGui:FindFirstChild("LineGui")
     if not gui then
@@ -189,13 +200,21 @@ end
 
 local function UpdateAimbot()
     if not CONFIG.AIMBOT_ENABLED or not AimbotActive then
+        ClearLine()
         return
     end
 
     local target, distance = FindClosestEnemy()
-    if target and distance <= CONFIG.AIM_DISTANCE then
+    if not target or distance > CONFIG.AIM_DISTANCE then
+        ClearLine()
+        return
+    end
+
+    do
         local head = GetHead(target)
-        if head then
+        if not head then
+            ClearLine()
+        else
             local cameraPos = Camera.CFrame.Position
             local direction = (head.Position - cameraPos).Unit
 
@@ -219,6 +238,13 @@ end)
 
 UserInputService.TouchEnded:Connect(function()
     AimbotActive = false
+end)
+
+Players.PlayerRemoving:Connect(function(p)
+    if ESPLabels[p] then
+        ESPLabels[p]:Destroy()
+        ESPLabels[p] = nil
+    end
 end)
 
 RunService.RenderStepped:Connect(function()
@@ -268,19 +294,48 @@ header.Size = UDim2.new(1, 0, 0, 42)
 header.BackgroundTransparency = 1
 header.Parent = main
 
-local logo = Instance.new("TextLabel")
+-- Logo SZ: latar gabungan merah-hitam berputar, teks putih berpinggir hitam
+local function makeSZ(obj, textSize)
+    obj.BackgroundTransparency = 1
+
+    local bg = Instance.new("Frame")
+    bg.Size = UDim2.new(1, 0, 1, 0)
+    bg.BackgroundColor3 = Color3.new(1, 1, 1)
+    bg.BorderSizePixel = 0
+    bg.ZIndex = 1
+    bg.Parent = obj
+    Instance.new("UICorner", bg).CornerRadius = UDim.new(1, 0)
+
+    local g = Instance.new("UIGradient", bg)
+    g.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, RED),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 0, 0)),
+        ColorSequenceKeypoint.new(1, RED),
+    })
+    TS:Create(g, TweenInfo.new(3, Enum.EasingStyle.Linear, Enum.EasingDirection.In, -1), {Rotation = 360}):Play()
+
+    local st = Instance.new("UIStroke", bg)
+    st.Color = RED
+    st.Thickness = 1.5
+
+    local t = Instance.new("TextLabel")
+    t.Size = UDim2.new(1, 0, 1, 0)
+    t.BackgroundTransparency = 1
+    t.Text = "SZ"
+    t.Font = Enum.Font.GothamBlack
+    t.TextSize = textSize
+    t.TextColor3 = Color3.new(1, 1, 1)
+    t.TextStrokeColor3 = Color3.new(0, 0, 0)
+    t.TextStrokeTransparency = 0
+    t.ZIndex = 2
+    t.Parent = obj
+end
+
+local logo = Instance.new("Frame")
 logo.Size = UDim2.new(0, 30, 0, 30)
 logo.Position = UDim2.new(0, 10, 0, 6)
-logo.BackgroundColor3 = DARK
-logo.Text = "SZ"
-logo.Font = Enum.Font.GothamBlack
-logo.TextSize = 14
-logo.TextColor3 = RED
 logo.Parent = header
-Instance.new("UICorner", logo).CornerRadius = UDim.new(1, 0)
-local ls = Instance.new("UIStroke", logo)
-ls.Color = RED
-ls.Thickness = 1.5
+makeSZ(logo, 14)
 
 local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, -130, 1, 0)
@@ -529,10 +584,10 @@ end
 -- Tab Main
 local MainTab = createTab("Main")
 addLabel(MainTab, "SC Aimbot Mobile")
-addToggle(MainTab, "Enable Aimbot", true, function(v) CONFIG.AIMBOT_ENABLED = v end)
-addToggle(MainTab, "Enable ESP", true, function(v) CONFIG.ESP_ENABLED = v end)
+addToggle(MainTab, "Enable Aimbot", false, function(v) CONFIG.AIMBOT_ENABLED = v end)
+addToggle(MainTab, "Enable ESP", false, function(v) CONFIG.ESP_ENABLED = v end)
 addToggle(MainTab, "Team Check", true, function(v) CONFIG.TEAM_CHECK = v end)
-addToggle(MainTab, "Draw Line", true, function(v) CONFIG.DRAW_LINES = v end)
+addToggle(MainTab, "Draw Line", false, function(v) CONFIG.DRAW_LINES = v if not v then ClearLine() end end)
 addLabel(MainTab, "Touch and hold to aim")
 addLabel(MainTab, "Release to stop aiming")
 
@@ -543,39 +598,96 @@ addSlider(SettingsTab, "Aim Sensitivity", 0.01, 1, 0.01, "x", CONFIG.AIM_SENSITI
 addSlider(SettingsTab, "ESP Distance", 50, 500, 10, "studs", CONFIG.ESP_DISTANCE, function(v) CONFIG.ESP_DISTANCE = v end)
 addToggle(SettingsTab, "Smooth Aiming", true, function(v) CONFIG.SMOOTH_AIM = v end)
 
--- Tab Info
-local InfoTab = createTab("Info")
-addParagraph(InfoTab, "CARA PAKAI", "Tahan layar untuk membidik.\nLepas untuk berhenti.")
-addParagraph(InfoTab, "TAB MAIN", "Enable Aimbot\nKamera otomatis mengarah ke kepala musuh terdekat.\n\nEnable ESP\nMenampilkan nama dan jarak pemain di layar.\n\nTeam Check\nPemain satu tim tidak dibidik.\n\nDraw Line\nGaris merah dari tengah layar ke target.")
-addParagraph(InfoTab, "TAB SETTINGS", "Aim Distance\nJarak maksimal musuh yang dibidik.\n\nAim Sensitivity\nKecepatan kamera berputar ke target. Kecil = halus, besar = cepat.\n\nESP Distance\nJarak maksimal pemain yang ditampilkan ESP.\n\nSmooth Aiming\nON: kamera bergerak halus. OFF: langsung kunci ke target.")
-addParagraph(InfoTab, "TOMBOL ATAS", "-  Kecilkan jadi ikon SZ\nX  Tutup UI dan matikan semua fitur")
-
 selectTab("Main")
 
 -- Ikon SZ saat di-minimize
 local icon = Instance.new("TextButton")
 icon.Size = UDim2.new(0, 50, 0, 50)
 icon.Position = UDim2.new(0, 15, 0.4, 0)
-icon.BackgroundColor3 = DARK
-icon.Text = "SZ"
-icon.Font = Enum.Font.GothamBlack
-icon.TextSize = 20
-icon.TextColor3 = RED
+icon.Text = ""
 icon.Visible = false
 icon.Parent = gui
-Instance.new("UICorner", icon).CornerRadius = UDim.new(1, 0)
-local is = Instance.new("UIStroke", icon)
-is.Color = RED
-is.Thickness = 2
-TS:Create(is, TweenInfo.new(1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {Transparency = 0.7}):Play()
+makeSZ(icon, 20)
 
 minBtn.MouseButton1Click:Connect(function() main.Visible = false icon.Visible = true end)
 icon.MouseButton1Click:Connect(function() main.Visible = true icon.Visible = false end)
+-- Konfirmasi sebelum hapus script
+local confirm = Instance.new("Frame")
+confirm.Size = UDim2.new(1, 0, 1, 0)
+confirm.BackgroundColor3 = Color3.new(0, 0, 0)
+confirm.BackgroundTransparency = 0.35
+confirm.BorderSizePixel = 0
+confirm.Active = true
+confirm.Visible = false
+confirm.ZIndex = 20
+confirm.Parent = main
+
+local box = Instance.new("Frame")
+box.AnchorPoint = Vector2.new(0.5, 0.5)
+box.Position = UDim2.new(0.5, 0, 0.5, 0)
+box.Size = UDim2.new(0, 260, 0, 130)
+box.BackgroundColor3 = DARK
+box.ZIndex = 21
+box.Parent = confirm
+Instance.new("UICorner", box).CornerRadius = UDim.new(0, 10)
+local bs = Instance.new("UIStroke", box)
+bs.Color = RED
+bs.Thickness = 1.5
+
+local ct = Instance.new("TextLabel")
+ct.Size = UDim2.new(1, -20, 0, 24)
+ct.Position = UDim2.new(0, 10, 0, 12)
+ct.BackgroundTransparency = 1
+ct.Text = "Hapus script?"
+ct.Font = Enum.Font.GothamBlack
+ct.TextSize = 16
+ct.TextColor3 = Color3.fromRGB(235, 235, 240)
+ct.ZIndex = 22
+ct.Parent = box
+
+local cs = Instance.new("TextLabel")
+cs.Size = UDim2.new(1, -20, 0, 34)
+cs.Position = UDim2.new(0, 10, 0, 38)
+cs.BackgroundTransparency = 1
+cs.Text = "Script akan ditutup dan semua fitur dimatikan."
+cs.Font = Enum.Font.Gotham
+cs.TextSize = 12
+cs.TextWrapped = true
+cs.TextColor3 = Color3.fromRGB(190, 190, 200)
+cs.ZIndex = 22
+cs.Parent = box
+
+local function confirmBtn(text, x, color)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(0.5, -15, 0, 32)
+    b.Position = UDim2.new(x, x == 0 and 10 or 5, 1, -42)
+    b.BackgroundColor3 = color
+    b.Text = text
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 13
+    b.TextColor3 = Color3.new(1, 1, 1)
+    b.ZIndex = 22
+    b.Parent = box
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 8)
+    return b
+end
+local cancelBtn = confirmBtn("Batal", 0, Color3.fromRGB(35, 35, 42))
+local yesBtn = confirmBtn("Ya, Hapus", 0.5, RED)
+
 closeBtn.MouseButton1Click:Connect(function()
+    confirm.Visible = true
+end)
+
+cancelBtn.MouseButton1Click:Connect(function()
+    confirm.Visible = false
+end)
+
+yesBtn.MouseButton1Click:Connect(function()
     CONFIG.ENABLED = false
     CONFIG.ESP_ENABLED = false
     for _, label in pairs(ESPLabels) do label:Destroy() end
     ESPLabels = {}
+    ClearLine()
     gui:Destroy()
 end)
 
