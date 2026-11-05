@@ -308,6 +308,41 @@ stroke.Color = RED
 stroke.Thickness = 1.5
 TS:Create(stroke, TweenInfo.new(1.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {Transparency = 0.7}):Play()
 
+-- Foto latar (opsional): isi PHOTO_URL dengan link Raw GitHub fotomu
+local PHOTO_URL = "https://raw.githubusercontent.com/SkyzenHub/SkyZen-Aimbot/refs/heads/main/bt_widget_wordmark.png"
+
+local function loadPhoto()
+    if PHOTO_URL == "" then return nil end
+    local ok, result = pcall(function()
+        if not (writefile and getcustomasset) then return nil end
+        writefile("skyzenhub_bg.png", game:HttpGet(PHOTO_URL))
+        return getcustomasset("skyzenhub_bg.png")
+    end)
+    if ok then return result end
+    return nil
+end
+
+local photoId = loadPhoto()
+if photoId then
+    local bgImg = Instance.new("ImageLabel")
+    bgImg.Size = UDim2.new(1, 0, 1, 0)
+    bgImg.BackgroundTransparency = 1
+    bgImg.Image = photoId
+    bgImg.ScaleType = Enum.ScaleType.Crop
+    bgImg.ZIndex = 0
+    bgImg.Parent = main
+    Instance.new("UICorner", bgImg).CornerRadius = UDim.new(0, 12)
+
+    local shade = Instance.new("Frame")
+    shade.Size = UDim2.new(1, 0, 1, 0)
+    shade.BackgroundColor3 = Color3.new(0, 0, 0)
+    shade.BackgroundTransparency = 0.45
+    shade.BorderSizePixel = 0
+    shade.ZIndex = 0
+    shade.Parent = main
+    Instance.new("UICorner", shade).CornerRadius = UDim.new(0, 12)
+end
+
 -- Header (area geser)
 local header = Instance.new("Frame")
 header.Size = UDim2.new(1, 0, 0, 42)
@@ -459,6 +494,7 @@ local function addToggle(page, name, default, callback)
     local b = Instance.new("TextButton")
     b.Size = UDim2.new(1, -6, 0, 34)
     b.BackgroundColor3 = Color3.fromRGB(18, 18, 24)
+    b.BackgroundTransparency = 0.25
     b.Font = Enum.Font.GothamBold
     b.TextSize = 13
     b.TextColor3 = Color3.fromRGB(220, 220, 225)
@@ -483,6 +519,7 @@ local function addSlider(page, name, min, max, inc, suffix, default, callback)
     local frame = Instance.new("Frame")
     frame.Size = UDim2.new(1, -6, 0, 52)
     frame.BackgroundColor3 = Color3.fromRGB(18, 18, 24)
+    frame.BackgroundTransparency = 0.25
     frame.Parent = page
     Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
     local fs = Instance.new("UIStroke", frame)
@@ -689,7 +726,7 @@ local function confirmBtn(text, x, color)
     return b
 end
 local cancelBtn = confirmBtn("Cancel", 0, Color3.fromRGB(35, 35, 42))
-local yesBtn = confirmBtn("Delete", 0.5, RED)
+local yesBtn = confirmBtn("Yes, Delete", 0.5, RED)
 
 closeBtn.MouseButton1Click:Connect(function()
     confirm.Visible = true
