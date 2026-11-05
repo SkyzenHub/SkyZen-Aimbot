@@ -155,79 +155,98 @@ local function UpdateESP()
     end
 end
 
-local function ClearLine()
+local LineFrame = nil
+
+local function GetLine()
     local g = LocalPlayer.PlayerGui:FindFirstChild("LineGui")
-    if g then g:ClearAllChildren() end
+    if not g then
+        g = Instance.new("ScreenGui")
+        g.Name = "LineGui"
+        g.ResetOnSpawn = false
+        g.IgnoreGuiInset = true
+        g.Parent = LocalPlayer.PlayerGui
+    end
+    if not LineFrame or not LineFrame.Parent then
+        LineFrame = Instance.new("Frame")
+        LineFrame.Name = "TraceLine"
+        LineFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+        LineFrame.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+        LineFrame.BorderSizePixel = 0
+        LineFrame.Visible = false
+        LineFrame.Parent = g
+    end
+    return LineFrame
 end
 
+local function ClearLine()
+    if LineFrame and LineFrame.Parent then
+        LineFrame.Visible = false
+    end
+end
+
+-- Garis dari tengah-bawah layar ke kepala musuh terdekat
 local function DrawLineToTarget(targetPosition)
     if not CONFIG.DRAW_LINES or not targetPosition then
         ClearLine()
         return
     end
 
-    local gui = LocalPlayer.PlayerGui:FindFirstChild("LineGui")
-    if not gui then
-        gui = Instance.new("ScreenGui")
-        gui.Name = "LineGui"
-        gui.ResetOnSpawn = false
-        gui.IgnoreGuiInset = true
-        gui.Parent = LocalPlayer.PlayerGui
+    local screenPos, onScreen = ScreenPos(targetPosition)
+    if not onScreen then
+        ClearLine()
+        return
     end
 
-    gui:ClearAllChildren()
+    local vp = Camera.ViewportSize
+    local from = Vector2.new(vp.X / 2, vp.Y)
+    local delta = screenPos - from
+    local mid = from + delta / 2
 
-    local screenPos, onScreen = ScreenPos(targetPosition)
-    if not onScreen then return end
+    local line = GetLine()
+    line.Position = UDim2.new(0, mid.X, 0, mid.Y)
+    line.Size = UDim2.new(0, delta.Magnitude, 0, 2)
+    line.Rotation = math.deg(math.atan2(delta.Y, delta.X))
+    line.Visible = true
+end
 
-    local centerX = Camera.ViewportSize.X / 2
-    local centerY = Camera.ViewportSize.Y / 2
-    local dx = screenPos.X - centerX
-    local dy = screenPos.Y - centerY
-    local distance = math.sqrt(dx * dx + dy * dy)
-    local angle = math.atan2(dy, dx)
-
-    local line = Instance.new("Frame")
-    line.Name = "TraceLine"
-    line.AnchorPoint = Vector2.new(0.5, 0.5)
-    line.Position = UDim2.new(centerX / Camera.ViewportSize.X, 0, centerY / Camera.ViewportSize.Y, 0)
-    line.Size = UDim2.new(0, distance, 0, 2)
-    line.Rotation = math.deg(angle)
-    line.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
-    line.BorderSizePixel = 0
-    line.Parent = gui
+local function UpdateLine()
+    if not CONFIG.DRAW_LINES then
+        ClearLine()
+        return
+    end
+    local target = FindClosestEnemy()
+    local head = target and GetHead(target)
+    if head then
+        DrawLineToTarget(head.Position)
+    else
+        ClearLine()
+    end
 end
 
 local function UpdateAimbot()
     if not CONFIG.AIMBOT_ENABLED or not AimbotActive then
-        ClearLine()
         return
     end
 
     local target, distance = FindClosestEnemy()
     if not target or distance > CONFIG.AIM_DISTANCE then
-        ClearLine()
         return
     end
 
-    do
-        local head = GetHead(target)
-        if not head then
-            ClearLine()
-        else
-            local cameraPos = Camera.CFrame.Position
-            local direction = (head.Position - cameraPos).Unit
+    local head = GetHead(target)
+    if not head then
+        return
+    end
 
-            if CONFIG.SMOOTH_AIM then
-                local currentDir = Camera.CFrame.LookVector
-                local blended = currentDir:Lerp(direction, CONFIG.AIM_SENSITIVITY)
-                Camera.CFrame = CFrame.new(cameraPos, cameraPos + blended)
-            else
-                Camera.CFrame = CFrame.new(cameraPos, head.Position)
-            end
+    local cameraPos = Camera.CFrame.Position
+    local direction = (head.Position - cameraPos).Unit
 
-            DrawLineToTarget(head.Position)
-        end
+    if CONFIG.SMOOTH_AIM then
+        local currentDir = Camera.CFrame.LookVector
+        local blended = currentDir:Lerp(direction, CONFIG.AIM_SENSITIVITY)
+        Camera.CFrame = CFrame.new(cameraPos, cameraPos + blended)
+    else
+        Camera.CFrame = CFrame.new(cameraPos, head.Position)
     end
 end
 
@@ -250,6 +269,7 @@ end)
 RunService.RenderStepped:Connect(function()
     if not CONFIG.ENABLED then return end
     UpdateESP()
+    UpdateLine()
     UpdateAimbot()
 end)
 
@@ -341,7 +361,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, -130, 1, 0)
 title.Position = UDim2.new(0, 48, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "SC AIMBOT MOBILE"
+title.Text = "SkyZenHub"
 title.Font = Enum.Font.GothamBlack
 title.TextSize = 16
 title.TextColor3 = Color3.fromRGB(235, 235, 240)
@@ -583,13 +603,10 @@ end
 
 -- Tab Main
 local MainTab = createTab("Main")
-addLabel(MainTab, "SC Aimbot Mobile")
 addToggle(MainTab, "Enable Aimbot", false, function(v) CONFIG.AIMBOT_ENABLED = v end)
 addToggle(MainTab, "Enable ESP", false, function(v) CONFIG.ESP_ENABLED = v end)
 addToggle(MainTab, "Team Check", true, function(v) CONFIG.TEAM_CHECK = v end)
 addToggle(MainTab, "Draw Line", false, function(v) CONFIG.DRAW_LINES = v if not v then ClearLine() end end)
-addLabel(MainTab, "Touch and hold to aim")
-addLabel(MainTab, "Release to stop aiming")
 
 -- Tab Settings
 local SettingsTab = createTab("Settings")
@@ -638,7 +655,7 @@ local ct = Instance.new("TextLabel")
 ct.Size = UDim2.new(1, -20, 0, 24)
 ct.Position = UDim2.new(0, 10, 0, 12)
 ct.BackgroundTransparency = 1
-ct.Text = "Hapus script?"
+ct.Text = "Delete script?"
 ct.Font = Enum.Font.GothamBlack
 ct.TextSize = 16
 ct.TextColor3 = Color3.fromRGB(235, 235, 240)
@@ -649,7 +666,7 @@ local cs = Instance.new("TextLabel")
 cs.Size = UDim2.new(1, -20, 0, 34)
 cs.Position = UDim2.new(0, 10, 0, 38)
 cs.BackgroundTransparency = 1
-cs.Text = "Script akan ditutup dan semua fitur dimatikan."
+cs.Text = "The script will be closed and all features turned off."
 cs.Font = Enum.Font.Gotham
 cs.TextSize = 12
 cs.TextWrapped = true
@@ -671,8 +688,8 @@ local function confirmBtn(text, x, color)
     Instance.new("UICorner", b).CornerRadius = UDim.new(0, 8)
     return b
 end
-local cancelBtn = confirmBtn("Batal", 0, Color3.fromRGB(35, 35, 42))
-local yesBtn = confirmBtn("Ya, Hapus", 0.5, RED)
+local cancelBtn = confirmBtn("Cancel", 0, Color3.fromRGB(35, 35, 42))
+local yesBtn = confirmBtn("Delete", 0.5, RED)
 
 closeBtn.MouseButton1Click:Connect(function()
     confirm.Visible = true
@@ -688,6 +705,8 @@ yesBtn.MouseButton1Click:Connect(function()
     for _, label in pairs(ESPLabels) do label:Destroy() end
     ESPLabels = {}
     ClearLine()
+    local lg = LocalPlayer.PlayerGui:FindFirstChild("LineGui")
+    if lg then lg:Destroy() end
     gui:Destroy()
 end)
 
@@ -714,5 +733,4 @@ end
 makeDraggable(header, main)
 makeDraggable(icon, icon)
 
-print("[SC Aimbot Mobile] Loaded")
-print("[SC Aimbot Mobile] Touch and hold to aim")
+print("[SkyZenHub] Loaded")
