@@ -433,7 +433,7 @@ local function makeSZ(obj, textSize)
     local t = Instance.new("TextLabel")
     t.Size = UDim2.new(1, 0, 1, 0)
     t.BackgroundTransparency = 1
-    t.Text = "SZ"
+    t.Text = "SZH"
     t.Font = Enum.Font.GothamBlack
     t.TextSize = textSize
     t.TextColor3 = Color3.new(1, 1, 1)
