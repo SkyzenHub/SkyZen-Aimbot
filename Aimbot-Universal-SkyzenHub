@@ -312,17 +312,42 @@ TS:Create(stroke, TweenInfo.new(1.2, Enum.EasingStyle.Sine, Enum.EasingDirection
 local PHOTO_URL = "https://raw.githubusercontent.com/SkyzenHub/SkyZen-Aimbot/refs/heads/main/bt_widget_wordmark.png"
 
 local function loadPhoto()
-    if PHOTO_URL == "" then return nil end
-    local ok, result = pcall(function()
-        if not (writefile and getcustomasset) then return nil end
-        writefile("skyzenhub_bg.png", game:HttpGet(PHOTO_URL))
-        return getcustomasset("skyzenhub_bg.png")
-    end)
-    if ok then return result end
-    return nil
+    if PHOTO_URL == "" then return nil, "PHOTO_URL is empty" end
+    if not writefile then return nil, "executor has no writefile" end
+    local getAsset = getcustomasset or getsynasset
+    if not getAsset then return nil, "executor has no getcustomasset" end
+
+    local data
+    local ok1, r1 = pcall(function() return game:HttpGet(PHOTO_URL) end)
+    if ok1 and type(r1) == "string" and #r1 > 100 then
+        data = r1
+    end
+
+    if not data then
+        local req = (syn and syn.request) or request or http_request
+        if req then
+            local ok2, res = pcall(function() return req({Url = PHOTO_URL, Method = "GET"}) end)
+            if ok2 and res and type(res.Body) == "string" and #res.Body > 100 then
+                data = res.Body
+            end
+        end
+    end
+    if not data then return nil, "could not download the photo" end
+
+    local ok3, err3 = pcall(writefile, "skyzenhub_bg.png", data)
+    if not ok3 then return nil, "writefile failed: " .. tostring(err3) end
+
+    local ok4, id = pcall(getAsset, "skyzenhub_bg.png")
+    if not ok4 or not id then return nil, "getcustomasset failed" end
+    return id
 end
 
-local photoId = loadPhoto()
+local photoId, photoErr = loadPhoto()
+if photoId then
+    print("[SkyZenHub] Photo loaded")
+else
+    print("[SkyZenHub] Photo failed: " .. tostring(photoErr))
+end
 if photoId then
     local bgImg = Instance.new("ImageLabel")
     bgImg.Size = UDim2.new(1, 0, 1, 0)
