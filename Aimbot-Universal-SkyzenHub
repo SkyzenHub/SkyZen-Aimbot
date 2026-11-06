@@ -557,7 +557,7 @@ local loader = Instance.new("CanvasGroup")
 loader.Name = "Loader"
 loader.AnchorPoint = Vector2.new(0.5, 0.5)
 loader.Position = UDim2.new(0.5, 0, 0.5, 0)
-loader.Size = UDim2.new(0, 280, 0, 170)
+loader.Size = UDim2.new(0, 280, 0, logoId and 170 or 120)
 loader.BackgroundTransparency = 1
 loader.BorderSizePixel = 0
 loader.Active = true
@@ -581,27 +581,27 @@ lbgStroke.Color = RED
 lbgStroke.Thickness = 1.5
 TS:Create(lbgStroke, TweenInfo.new(1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {Transparency = 0.7}):Play()
 
--- Logo SZ (lingkaran merah-hitam berputar)
-local lLogo = Instance.new("Frame")
-lLogo.AnchorPoint = Vector2.new(0.5, 0)
-lLogo.Position = UDim2.new(0.5, 0, 0, 18)
-lLogo.Size = UDim2.new(0, 56, 0, 56)
-lLogo.BackgroundColor3 = Color3.new(1, 1, 1)
-lLogo.BorderSizePixel = 0
-lLogo.Parent = loader
-Instance.new("UICorner", lLogo).CornerRadius = UDim.new(1, 0)
-local lLogoGrad = Instance.new("UIGradient", lLogo)
-lLogoGrad.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, RED),
-    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 0, 0)),
-    ColorSequenceKeypoint.new(1, RED),
-})
-TS:Create(lLogoGrad, TweenInfo.new(2.5, Enum.EasingStyle.Linear, Enum.EasingDirection.In, -1), {Rotation = 360}):Play()
-local lLogoStroke = Instance.new("UIStroke", lLogo)
-lLogoStroke.Color = RED
-lLogoStroke.Thickness = 2
-
+-- Logo hanya tampil kalau gambarnya berhasil dimuat (tidak ada tulisan SZ)
 if logoId then
+    local lLogo = Instance.new("Frame")
+    lLogo.AnchorPoint = Vector2.new(0.5, 0)
+    lLogo.Position = UDim2.new(0.5, 0, 0, 18)
+    lLogo.Size = UDim2.new(0, 56, 0, 56)
+    lLogo.BackgroundColor3 = Color3.new(1, 1, 1)
+    lLogo.BorderSizePixel = 0
+    lLogo.Parent = loader
+    Instance.new("UICorner", lLogo).CornerRadius = UDim.new(1, 0)
+    local lLogoGrad = Instance.new("UIGradient", lLogo)
+    lLogoGrad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, RED),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 0, 0)),
+        ColorSequenceKeypoint.new(1, RED),
+    })
+    TS:Create(lLogoGrad, TweenInfo.new(2.5, Enum.EasingStyle.Linear, Enum.EasingDirection.In, -1), {Rotation = 360}):Play()
+    local lLogoStroke = Instance.new("UIStroke", lLogo)
+    lLogoStroke.Color = RED
+    lLogoStroke.Thickness = 2
+
     local lImg = Instance.new("ImageLabel")
     lImg.AnchorPoint = Vector2.new(0.5, 0)
     lImg.Position = UDim2.new(0.5, 0, 0, 18)
@@ -612,24 +612,10 @@ if logoId then
     lImg.ZIndex = 2
     lImg.Parent = loader
     Instance.new("UICorner", lImg).CornerRadius = UDim.new(1, 0)
-else
-    local lLogoText = Instance.new("TextLabel")
-    lLogoText.AnchorPoint = Vector2.new(0.5, 0)
-    lLogoText.Position = UDim2.new(0.5, 0, 0, 18)
-    lLogoText.Size = UDim2.new(0, 56, 0, 56)
-    lLogoText.BackgroundTransparency = 1
-    lLogoText.Text = "SZ"
-    lLogoText.Font = Enum.Font.GothamBlack
-    lLogoText.TextSize = 24
-    lLogoText.TextColor3 = Color3.new(1, 1, 1)
-    lLogoText.TextStrokeColor3 = Color3.new(0, 0, 0)
-    lLogoText.TextStrokeTransparency = 0
-    lLogoText.ZIndex = 2
-    lLogoText.Parent = loader
 end
 
 local lTitle = Instance.new("TextLabel")
-lTitle.Position = UDim2.new(0, 0, 0, 82)
+lTitle.Position = UDim2.new(0, 0, 0, logoId and 82 or 24)
 lTitle.Size = UDim2.new(1, 0, 0, 24)
 lTitle.BackgroundTransparency = 1
 lTitle.Text = "SkyZenHub"
@@ -639,7 +625,7 @@ lTitle.TextColor3 = Color3.fromRGB(235, 235, 240)
 lTitle.Parent = loader
 
 local lStatus = Instance.new("TextLabel")
-lStatus.Position = UDim2.new(0, 0, 0, 108)
+lStatus.Position = UDim2.new(0, 0, 0, logoId and 108 or 50)
 lStatus.Size = UDim2.new(1, 0, 0, 18)
 lStatus.BackgroundTransparency = 1
 lStatus.Text = "Initializing..."
@@ -650,7 +636,7 @@ lStatus.Parent = loader
 
 local lBar = Instance.new("Frame")
 lBar.AnchorPoint = Vector2.new(0.5, 0)
-lBar.Position = UDim2.new(0.5, 0, 0, 138)
+lBar.Position = UDim2.new(0.5, 0, 0, logoId and 138 or 80)
 lBar.Size = UDim2.new(0, 220, 0, 6)
 lBar.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
 lBar.BorderSizePixel = 0
@@ -767,29 +753,19 @@ local function makeSZ(obj, textSize)
         Instance.new("UICorner", img).CornerRadius = UDim.new(1, 0)
         return
     end
-
-    local t = Instance.new("TextLabel")
-    t.Size = UDim2.new(1, 0, 1, 0)
-    t.BackgroundTransparency = 1
-    t.Text = "SZ"
-    t.Font = Enum.Font.GothamBlack
-    t.TextSize = textSize
-    t.TextColor3 = Color3.new(1, 1, 1)
-    t.TextStrokeColor3 = Color3.new(0, 0, 0)
-    t.TextStrokeTransparency = 0
-    t.ZIndex = 2
-    t.Parent = obj
 end
 
-local logo = Instance.new("Frame")
-logo.Size = UDim2.new(0, 30, 0, 30)
-logo.Position = UDim2.new(0, 10, 0, 6)
-logo.Parent = header
-makeSZ(logo, 14)
+if logoId then
+    local logo = Instance.new("Frame")
+    logo.Size = UDim2.new(0, 30, 0, 30)
+    logo.Position = UDim2.new(0, 10, 0, 6)
+    logo.Parent = header
+    makeSZ(logo, 14)
+end
 
 local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, -130, 1, 0)
-title.Position = UDim2.new(0, 48, 0, 0)
+title.Position = UDim2.new(0, logoId and 48 or 14, 0, 0)
 title.BackgroundTransparency = 1
 title.Text = "SkyZenHub"
 title.Font = Enum.Font.GothamBlack
