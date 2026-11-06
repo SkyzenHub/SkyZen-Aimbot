@@ -17,6 +17,11 @@ local CONFIG = {
     TEAM_CHECK = true,
     WALL_CHECK = false,
     AUTO_LOCK = false,
+    SPEED_ENABLED = false,
+    SPEED_VALUE = 32,
+    HOLO_ENEMY = false,
+    HOLO_TEAM = false,
+    HOLO_OPACITY = 45,
     FOV_ENABLED = false,
     FOV_RADIUS = 120,
     DRAW_LINES = false,
@@ -29,6 +34,58 @@ local CONFIG = {
     ESP_COLOR_ENEMY = Color3.fromRGB(255, 0, 0),
     ESP_COLOR_FRIEND = Color3.fromRGB(0, 255, 0),
 }
+
+-- AUTO SAVE: pengaturan disimpan otomatis dan dimuat lagi saat script dijalankan
+local HttpService = game:GetService("HttpService")
+local SAVE_FILE = "SkyZenHub_Config.json"
+local SAVE_KEYS = {
+    "AIMBOT_ENABLED", "AUTO_LOCK", "FOV_ENABLED", "WALL_CHECK", "TEAM_CHECK", "SMOOTH_AIM",
+    "AIM_DISTANCE", "AIM_SENSITIVITY", "FOV_RADIUS",
+    "ESP_ENEMY", "ESP_TEAM", "DRAW_LINES", "ESP_DISTANCE",
+    "HOLO_ENEMY", "HOLO_TEAM", "HOLO_OPACITY",
+    "SPEED_ENABLED", "SPEED_VALUE",
+}
+local ConfigLocked = false
+
+local function LoadConfig()
+    if not (isfile and readfile) then return end
+    local ok, data = pcall(function()
+        if not isfile(SAVE_FILE) then return nil end
+        return HttpService:JSONDecode(readfile(SAVE_FILE))
+    end)
+    if ok and type(data) == "table" then
+        for _, key in ipairs(SAVE_KEYS) do
+            local v = data[key]
+            if v ~= nil and type(v) == type(CONFIG[key]) then
+                CONFIG[key] = v
+            end
+        end
+        print("[SkyZenHub] Settings loaded")
+    end
+end
+
+local function SaveNow()
+    if not writefile or ConfigLocked then return end
+    local data = {}
+    for _, key in ipairs(SAVE_KEYS) do
+        data[key] = CONFIG[key]
+    end
+    pcall(function()
+        writefile(SAVE_FILE, HttpService:JSONEncode(data))
+    end)
+end
+
+local savePending = false
+local function SaveConfig()
+    if savePending then return end
+    savePending = true
+    task.delay(0.5, function()
+        savePending = false
+        SaveNow()
+    end)
+end
+
+LoadConfig()
 
 local ESPLabels = {}
 local AimbotActive = false
@@ -382,6 +439,89 @@ local function UpdateAimbot()
     end
 end
 
+-- Speed: mengatur WalkSpeed karakter, dikembalikan ke semula saat dimatikan
+local OriginalSpeed = nil
+
+local function UpdateSpeed()
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not hum then
+        return
+    end
+
+    if CONFIG.SPEED_ENABLED then
+        if not OriginalSpeed then
+            OriginalSpeed = hum.WalkSpeed
+        end
+        hum.WalkSpeed = CONFIG.SPEED_VALUE
+    elseif OriginalSpeed then
+        hum.WalkSpeed = OriginalSpeed
+        OriginalSpeed = nil
+    end
+end
+
+-- ESP Hologram: Highlight tembus tembok (merah = musuh, hijau = satu tim)
+local HoloObjs = {}
+local HoloParent = (gethui and gethui()) or game:GetService("CoreGui")
+
+local function RemoveHolo(player)
+    local h = HoloObjs[player]
+    if h then
+        h:Destroy()
+        HoloObjs[player] = nil
+    end
+end
+
+local function CreateHolo(char)
+    local h = Instance.new("Highlight")
+    h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    h.OutlineTransparency = 0
+    h.Adornee = char
+    local ok = pcall(function() h.Parent = HoloParent end)
+    if not ok or not h.Parent then
+        h.Parent = char
+    end
+    return h
+end
+
+local function UpdateHolo()
+    if not (CONFIG.HOLO_ENEMY or CONFIG.HOLO_TEAM) then
+        for player in pairs(HoloObjs) do
+            RemoveHolo(player)
+        end
+        return
+    end
+
+    -- Efek berdenyut halus supaya terlihat seperti hologram
+    local pulse = math.sin(os.clock() * 3) * 0.08
+    local fill = math.clamp((1 - CONFIG.HOLO_OPACITY / 100) + pulse, 0, 1)
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local char = player.Character
+            local friend = SameTeam(player)
+            local wanted = char and ((friend and CONFIG.HOLO_TEAM) or ((not friend) and CONFIG.HOLO_ENEMY))
+
+            if wanted and GetPlayerDistance(player) <= CONFIG.ESP_DISTANCE then
+                local h = HoloObjs[player]
+                if not h or not h.Parent then
+                    h = CreateHolo(char)
+                    HoloObjs[player] = h
+                end
+                if h.Adornee ~= char then
+                    h.Adornee = char
+                end
+                local color = friend and CONFIG.ESP_COLOR_FRIEND or CONFIG.ESP_COLOR_ENEMY
+                h.FillColor = color
+                h.OutlineColor = color
+                h.FillTransparency = fill
+            else
+                RemoveHolo(player)
+            end
+        end
+    end
+end
+
 -- Lingkaran FOV + crosshair di tengah layar
 local FovCircle = nil
 
@@ -454,6 +594,7 @@ Players.PlayerRemoving:Connect(function(p)
         LineFrames[p]:Destroy()
         LineFrames[p] = nil
     end
+    RemoveHolo(p)
 end)
 
 RunService.RenderStepped:Connect(function()
@@ -461,6 +602,8 @@ RunService.RenderStepped:Connect(function()
     UpdateESP()
     UpdateLine()
     UpdateFov()
+    UpdateSpeed()
+    UpdateHolo()
 end)
 
 -- Jalan tepat setelah kamera bawaan Roblox, supaya tidak ditimpa
@@ -656,7 +799,7 @@ local function setProgress(p, text, dur)
 end
 
 -- Lama total loading (detik). Ubah angka ini kalau mau lebih cepat atau lebih lama.
-local LOAD_TIME = 9
+local LOAD_TIME = 10
 local loadStart = os.clock()
 
 setProgress(0.1, "Initializing...", 1.2)
@@ -820,11 +963,11 @@ end
 
 local function createTab(name)
     local b = Instance.new("TextButton")
-    b.Size = UDim2.new(0, 70, 1, 0)
+    b.Size = UDim2.new(0, 58, 1, 0)
     b.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
     b.Text = name
     b.Font = Enum.Font.GothamBold
-    b.TextSize = 12
+    b.TextSize = 11
     b.TextColor3 = Color3.new(1, 1, 1)
     b.Parent = tabBar
     Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
@@ -883,6 +1026,7 @@ local function addToggle(page, name, default, callback)
         state = not state
         refresh()
         pcall(callback, state)
+        SaveConfig()
     end)
 end
 
@@ -945,6 +1089,7 @@ local function addSlider(page, name, min, max, inc, suffix, default, callback)
             value = v
             render()
             pcall(callback, value)
+            SaveConfig()
         end
     end
 
@@ -1011,25 +1156,36 @@ end
 
 -- Tab Aimbot
 local AimbotTab = createTab("Aimbot")
-addToggle(AimbotTab, "Enable Aimbot", false, function(v) CONFIG.AIMBOT_ENABLED = v end)
-addToggle(AimbotTab, "Auto Lock", false, function(v) CONFIG.AUTO_LOCK = v end)
-addToggle(AimbotTab, "FOV Lock", false, function(v) CONFIG.FOV_ENABLED = v end)
-addToggle(AimbotTab, "Wall Check", false, function(v) CONFIG.WALL_CHECK = v end)
-addToggle(AimbotTab, "Team Check", true, function(v) CONFIG.TEAM_CHECK = v end)
+addToggle(AimbotTab, "Enable Aimbot", CONFIG.AIMBOT_ENABLED, function(v) CONFIG.AIMBOT_ENABLED = v end)
+addToggle(AimbotTab, "Auto Lock", CONFIG.AUTO_LOCK, function(v) CONFIG.AUTO_LOCK = v end)
+addToggle(AimbotTab, "FOV Lock", CONFIG.FOV_ENABLED, function(v) CONFIG.FOV_ENABLED = v end)
+addToggle(AimbotTab, "Wall Check", CONFIG.WALL_CHECK, function(v) CONFIG.WALL_CHECK = v end)
+addToggle(AimbotTab, "Team Check", CONFIG.TEAM_CHECK, function(v) CONFIG.TEAM_CHECK = v end)
 
 -- Tab ESP
 local EspTab = createTab("ESP")
-addToggle(EspTab, "ESP Enemy", false, function(v) CONFIG.ESP_ENEMY = v end)
-addToggle(EspTab, "ESP Team", false, function(v) CONFIG.ESP_TEAM = v end)
-addToggle(EspTab, "Draw Line", false, function(v) CONFIG.DRAW_LINES = v if not v then ClearLine() end end)
+addToggle(EspTab, "ESP Enemy", CONFIG.ESP_ENEMY, function(v) CONFIG.ESP_ENEMY = v end)
+addToggle(EspTab, "ESP Team", CONFIG.ESP_TEAM, function(v) CONFIG.ESP_TEAM = v end)
+addToggle(EspTab, "Draw Line", CONFIG.DRAW_LINES, function(v) CONFIG.DRAW_LINES = v if not v then ClearLine() end end)
 addSlider(EspTab, "ESP Distance", 50, 500, 10, "studs", CONFIG.ESP_DISTANCE, function(v) CONFIG.ESP_DISTANCE = v end)
+
+-- Tab Holo (ESP Hologram)
+local HoloTab = createTab("Holo")
+addToggle(HoloTab, "Hologram Enemy", CONFIG.HOLO_ENEMY, function(v) CONFIG.HOLO_ENEMY = v end)
+addToggle(HoloTab, "Hologram Team", CONFIG.HOLO_TEAM, function(v) CONFIG.HOLO_TEAM = v end)
+addSlider(HoloTab, "Opacity", 10, 90, 5, "%", CONFIG.HOLO_OPACITY, function(v) CONFIG.HOLO_OPACITY = v end)
 
 -- Tab Settings (pengaturan aimbot)
 local SettingsTab = createTab("Settings")
-addToggle(SettingsTab, "Smooth Aiming", true, function(v) CONFIG.SMOOTH_AIM = v end)
+addToggle(SettingsTab, "Smooth Aiming", CONFIG.SMOOTH_AIM, function(v) CONFIG.SMOOTH_AIM = v end)
 addSlider(SettingsTab, "Aim Distance", 10, 300, 5, "studs", CONFIG.AIM_DISTANCE, function(v) CONFIG.AIM_DISTANCE = v end)
 addSlider(SettingsTab, "Aim Sensitivity", 0.01, 1, 0.01, "x", CONFIG.AIM_SENSITIVITY, function(v) CONFIG.AIM_SENSITIVITY = v end)
 addSlider(SettingsTab, "FOV Size", 20, 400, 5, "px", CONFIG.FOV_RADIUS, function(v) CONFIG.FOV_RADIUS = v end)
+
+-- Tab Player
+local PlayerTab = createTab("Player")
+addToggle(PlayerTab, "Speed Hack", CONFIG.SPEED_ENABLED, function(v) CONFIG.SPEED_ENABLED = v end)
+addSlider(PlayerTab, "Speed", 16, 120, 2, "speed", CONFIG.SPEED_VALUE, function(v) CONFIG.SPEED_VALUE = v end)
 
 selectTab("Aimbot")
 
@@ -1105,7 +1261,7 @@ local function confirmBtn(text, x, color)
     return b
 end
 local cancelBtn = confirmBtn("Cancel", 0, Color3.fromRGB(35, 35, 42))
-local yesBtn = confirmBtn("Delete", 0.5, RED)
+local yesBtn = confirmBtn("Yes, Delete", 0.5, RED)
 
 closeBtn.MouseButton1Click:Connect(function()
     confirm.Visible = true
@@ -1116,6 +1272,13 @@ cancelBtn.MouseButton1Click:Connect(function()
 end)
 
 yesBtn.MouseButton1Click:Connect(function()
+    SaveNow()
+    ConfigLocked = true
+    CONFIG.SPEED_ENABLED = false
+    UpdateSpeed()
+    CONFIG.HOLO_ENEMY = false
+    CONFIG.HOLO_TEAM = false
+    UpdateHolo()
     CONFIG.ENABLED = false
     pcall(function() RunService:UnbindFromRenderStep("SkyZenHubAim") end)
     CONFIG.ESP_ENEMY = false
