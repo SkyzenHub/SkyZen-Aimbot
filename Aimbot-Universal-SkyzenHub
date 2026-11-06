@@ -11,9 +11,10 @@ local LocalPlayer = Players.LocalPlayer
 ------------------------------------------------------------
 local CONFIG = {
     ENABLED = true,
-    ESP_ENABLED = false,
+    ESP_ENEMY = false,
+    ESP_TEAM = false,
     AIMBOT_ENABLED = false,
-    TEAM_CHECK = true,
+    TEAM_CHECK = false,
     DRAW_LINES = false,
 
     AIM_DISTANCE = 120,
@@ -28,19 +29,76 @@ local CONFIG = {
 local ESPLabels = {}
 local AimbotActive = false
 
-local function IsEnemy(targetPlayer)
-    if not CONFIG.TEAM_CHECK then
-        return targetPlayer ~= LocalPlayer
+-- Ambil identitas tim pemain secara langsung (dibaca ulang tiap frame, jadi selalu terbaru).
+-- Mencoba beberapa sistem tim yang umum dipakai game Roblox.
+local TEAM_NAMES = {"Team", "team", "TeamName", "Side", "Faction"}
+
+local function ValueToKey(v)
+    if v == nil then return nil end
+    if typeof(v) == "Instance" then return "I:" .. v.Name end
+    return "V:" .. tostring(v)
+end
+
+local function GetTeamKey(player)
+    -- 1. Sistem Team bawaan Roblox
+    if player.Team then
+        return "T:" .. player.Team.Name
     end
+
+    -- 2. TeamColor (kalau pemain tidak netral)
+    if not player.Neutral then
+        return "C:" .. tostring(player.TeamColor)
+    end
+
+    -- 3. Attribute pada pemain atau karakter
+    for _, name in ipairs(TEAM_NAMES) do
+        local v = player:GetAttribute(name)
+        if v == nil and player.Character then
+            v = player.Character:GetAttribute(name)
+        end
+        if v ~= nil then
+            return "A:" .. tostring(v)
+        end
+    end
+
+    -- 4. Value (StringValue, ObjectValue, dll) di pemain atau leaderstats
+    local holders = {player, player:FindFirstChild("leaderstats")}
+    for _, holder in ipairs(holders) do
+        if holder then
+            for _, name in ipairs(TEAM_NAMES) do
+                local obj = holder:FindFirstChild(name)
+                if obj and obj:IsA("ValueBase") then
+                    local key = ValueToKey(obj.Value)
+                    if key then return key end
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
+-- Apakah pemain satu tim dengan kita (tidak terpengaruh toggle Team Check)
+local function SameTeam(player)
+    if player == LocalPlayer then
+        return true
+    end
+    local myKey = GetTeamKey(LocalPlayer)
+    local theirKey = GetTeamKey(player)
+    if not myKey or not theirKey then
+        return false
+    end
+    return myKey == theirKey
+end
+
+local function IsEnemy(targetPlayer)
     if targetPlayer == LocalPlayer then
         return false
     end
-    local localTeam = LocalPlayer.Team
-    local targetTeam = targetPlayer.Team
-    if not localTeam or not targetTeam then
+    if not CONFIG.TEAM_CHECK then
         return true
     end
-    return localTeam ~= targetTeam
+    return not SameTeam(targetPlayer)
 end
 
 local function GetPlayerDistance(player)
@@ -104,7 +162,7 @@ local function CreateESPLabel(player)
 end
 
 local function UpdateESP()
-    if not CONFIG.ESP_ENABLED then
+    if not (CONFIG.ESP_ENEMY or CONFIG.ESP_TEAM) then
         for _, label in pairs(ESPLabels) do
             label:Destroy()
         end
@@ -118,9 +176,11 @@ local function UpdateESP()
 
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            local friend = SameTeam(player)
+            local wanted = (friend and CONFIG.ESP_TEAM) or ((not friend) and CONFIG.ESP_ENEMY)
             local distance = GetPlayerDistance(player)
 
-            if distance <= CONFIG.ESP_DISTANCE then
+            if wanted and distance <= CONFIG.ESP_DISTANCE then
                 local label = ESPLabels[player]
                 if not label then
                     label = CreateESPLabel(player)
@@ -133,12 +193,7 @@ local function UpdateESP()
                     if onScreen then
                         label.Visible = true
                         label.Position = UDim2.new(screenPos.X / Camera.ViewportSize.X, 0, screenPos.Y / Camera.ViewportSize.Y, 0)
-
-                        if IsEnemy(player) then
-                            label.TextColor3 = CONFIG.ESP_COLOR_ENEMY
-                        else
-                            label.TextColor3 = CONFIG.ESP_COLOR_FRIEND
-                        end
+                        label.TextColor3 = friend and CONFIG.ESP_COLOR_FRIEND or CONFIG.ESP_COLOR_ENEMY
                         label.Text = player.Name .. " (" .. tostring(math.floor(distance)) .. ")"
                     else
                         label.Visible = false
@@ -433,7 +488,7 @@ local function makeSZ(obj, textSize)
     local t = Instance.new("TextLabel")
     t.Size = UDim2.new(1, 0, 1, 0)
     t.BackgroundTransparency = 1
-    t.Text = "SZH"
+    t.Text = "SZ"
     t.Font = Enum.Font.GothamBlack
     t.TextSize = textSize
     t.TextColor3 = Color3.new(1, 1, 1)
@@ -698,7 +753,8 @@ end
 -- Tab Main
 local MainTab = createTab("Main")
 addToggle(MainTab, "Enable Aimbot", false, function(v) CONFIG.AIMBOT_ENABLED = v end)
-addToggle(MainTab, "Enable ESP", false, function(v) CONFIG.ESP_ENABLED = v end)
+addToggle(MainTab, "ESP Enemy", false, function(v) CONFIG.ESP_ENEMY = v end)
+addToggle(MainTab, "ESP Team", false, function(v) CONFIG.ESP_TEAM = v end)
 addToggle(MainTab, "Team Check", true, function(v) CONFIG.TEAM_CHECK = v end)
 addToggle(MainTab, "Draw Line", false, function(v) CONFIG.DRAW_LINES = v if not v then ClearLine() end end)
 
@@ -795,7 +851,8 @@ end)
 
 yesBtn.MouseButton1Click:Connect(function()
     CONFIG.ENABLED = false
-    CONFIG.ESP_ENABLED = false
+    CONFIG.ESP_ENEMY = false
+    CONFIG.ESP_TEAM = false
     for _, label in pairs(ESPLabels) do label:Destroy() end
     ESPLabels = {}
     ClearLine()
