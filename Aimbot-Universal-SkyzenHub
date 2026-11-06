@@ -19,6 +19,7 @@ local CONFIG = {
     AUTO_LOCK = false,
     SPEED_ENABLED = false,
     SPEED_VALUE = 32,
+    INFINITE_JUMP = false,
     HOLO_ENEMY = false,
     HOLO_TEAM = false,
     HOLO_OPACITY = 45,
@@ -43,7 +44,7 @@ local SAVE_KEYS = {
     "AIM_DISTANCE", "AIM_SENSITIVITY", "FOV_RADIUS",
     "ESP_ENEMY", "ESP_TEAM", "DRAW_LINES", "ESP_DISTANCE",
     "HOLO_ENEMY", "HOLO_TEAM", "HOLO_OPACITY",
-    "SPEED_ENABLED", "SPEED_VALUE",
+    "SPEED_ENABLED", "SPEED_VALUE", "INFINITE_JUMP",
 }
 local ConfigLocked = false
 
@@ -566,6 +567,16 @@ local function UpdateFov()
     g.Enabled = true
     FovCircle.Size = UDim2.new(0, CONFIG.FOV_RADIUS * 2, 0, CONFIG.FOV_RADIUS * 2)
 end
+
+-- Infinite Jump: lompat lagi di udara setiap kali tombol lompat ditekan
+UserInputService.JumpRequest:Connect(function()
+    if not CONFIG.INFINITE_JUMP then return end
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum:ChangeState(Enum.HumanoidStateType.Jumping)
+    end
+end)
 
 local aimTouch = nil
 
@@ -1186,6 +1197,7 @@ addSlider(SettingsTab, "FOV Size", 20, 400, 5, "px", CONFIG.FOV_RADIUS, function
 local PlayerTab = createTab("Player")
 addToggle(PlayerTab, "Speed Hack", CONFIG.SPEED_ENABLED, function(v) CONFIG.SPEED_ENABLED = v end)
 addSlider(PlayerTab, "Speed", 16, 120, 2, "speed", CONFIG.SPEED_VALUE, function(v) CONFIG.SPEED_VALUE = v end)
+addToggle(PlayerTab, "Infinite Jump", CONFIG.INFINITE_JUMP, function(v) CONFIG.INFINITE_JUMP = v end)
 
 selectTab("Aimbot")
 
@@ -1276,6 +1288,7 @@ yesBtn.MouseButton1Click:Connect(function()
     ConfigLocked = true
     CONFIG.SPEED_ENABLED = false
     UpdateSpeed()
+    CONFIG.INFINITE_JUMP = false
     CONFIG.HOLO_ENEMY = false
     CONFIG.HOLO_TEAM = false
     UpdateHolo()
