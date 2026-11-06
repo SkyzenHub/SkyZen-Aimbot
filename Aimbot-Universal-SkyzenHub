@@ -16,6 +16,7 @@ local CONFIG = {
     AIMBOT_ENABLED = false,
     TEAM_CHECK = true,
     WALL_CHECK = false,
+    AUTO_LOCK = false,
     FOV_ENABLED = false,
     FOV_RADIUS = 120,
     DRAW_LINES = false,
@@ -344,29 +345,39 @@ local function UpdateLine()
     end
 end
 
+local aimDir = nil
+
 local function UpdateAimbot()
-    if not CONFIG.AIMBOT_ENABLED or not AimbotActive then
+    if not CONFIG.AIMBOT_ENABLED or not (AimbotActive or CONFIG.AUTO_LOCK) then
+        aimDir = nil
         return
     end
 
     local target, distance = FindClosestEnemy()
     if not target or distance > CONFIG.AIM_DISTANCE then
+        aimDir = nil
         return
     end
 
     local head = GetHead(target)
     if not head then
+        aimDir = nil
         return
     end
 
     local cameraPos = Camera.CFrame.Position
     local direction = (head.Position - cameraPos).Unit
 
-    if CONFIG.SMOOTH_AIM then
-        local currentDir = Camera.CFrame.LookVector
-        local blended = currentDir:Lerp(direction, CONFIG.AIM_SENSITIVITY)
-        Camera.CFrame = CFrame.new(cameraPos, cameraPos + blended)
+    if CONFIG.SMOOTH_AIM and CONFIG.AIM_SENSITIVITY < 0.99 then
+        -- Arah bidik disimpan sendiri supaya kamera bergerak halus dan benar-benar sampai ke target
+        if not aimDir then
+            aimDir = Camera.CFrame.LookVector
+        end
+        aimDir = aimDir:Lerp(direction, CONFIG.AIM_SENSITIVITY).Unit
+        Camera.CFrame = CFrame.new(cameraPos, cameraPos + aimDir)
     else
+        -- Sensitivity 1 atau Smooth OFF: langsung kunci ke kepala
+        aimDir = nil
         Camera.CFrame = CFrame.new(cameraPos, head.Position)
     end
 end
@@ -416,13 +427,22 @@ local function UpdateFov()
     FovCircle.Size = UDim2.new(0, CONFIG.FOV_RADIUS * 2, 0, CONFIG.FOV_RADIUS * 2)
 end
 
-UserInputService.TouchStarted:Connect(function(_, processed)
+local aimTouch = nil
+
+UserInputService.TouchStarted:Connect(function(touch, processed)
     if processed then return end
-    AimbotActive = true
+    if not aimTouch then
+        aimTouch = touch
+        AimbotActive = true
+    end
 end)
 
-UserInputService.TouchEnded:Connect(function()
-    AimbotActive = false
+-- Hanya jari yang memulai bidikan yang menghentikannya (melepas joystick tidak ikut mematikan)
+UserInputService.TouchEnded:Connect(function(touch)
+    if touch == aimTouch then
+        aimTouch = nil
+        AimbotActive = false
+    end
 end)
 
 Players.PlayerRemoving:Connect(function(p)
@@ -441,6 +461,12 @@ RunService.RenderStepped:Connect(function()
     UpdateESP()
     UpdateLine()
     UpdateFov()
+end)
+
+-- Jalan tepat setelah kamera bawaan Roblox, supaya tidak ditimpa
+pcall(function() RunService:UnbindFromRenderStep("SkyZenHubAim") end)
+RunService:BindToRenderStep("SkyZenHubAim", Enum.RenderPriority.Camera.Value + 1, function()
+    if not CONFIG.ENABLED then return end
     UpdateAimbot()
 end)
 
@@ -869,6 +895,7 @@ end
 -- Tab Main
 local MainTab = createTab("Main")
 addToggle(MainTab, "Enable Aimbot", false, function(v) CONFIG.AIMBOT_ENABLED = v end)
+addToggle(MainTab, "Auto Lock", false, function(v) CONFIG.AUTO_LOCK = v end)
 addToggle(MainTab, "ESP Enemy", false, function(v) CONFIG.ESP_ENEMY = v end)
 addToggle(MainTab, "ESP Team", false, function(v) CONFIG.ESP_TEAM = v end)
 addToggle(MainTab, "Team Check", true, function(v) CONFIG.TEAM_CHECK = v end)
@@ -970,6 +997,7 @@ end)
 
 yesBtn.MouseButton1Click:Connect(function()
     CONFIG.ENABLED = false
+    pcall(function() RunService:UnbindFromRenderStep("SkyZenHubAim") end)
     CONFIG.ESP_ENEMY = false
     CONFIG.ESP_TEAM = false
     for _, label in pairs(ESPLabels) do label:Destroy() end
