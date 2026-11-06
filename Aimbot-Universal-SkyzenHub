@@ -656,7 +656,7 @@ local function setProgress(p, text, dur)
 end
 
 -- Lama total loading (detik). Ubah angka ini kalau mau lebih cepat atau lebih lama.
-local LOAD_TIME = 10
+local LOAD_TIME = 9
 local loadStart = os.clock()
 
 setProgress(0.1, "Initializing...", 1.2)
@@ -1105,7 +1105,7 @@ local function confirmBtn(text, x, color)
     return b
 end
 local cancelBtn = confirmBtn("Cancel", 0, Color3.fromRGB(35, 35, 42))
-local yesBtn = confirmBtn("Yes, Delete", 0.5, RED)
+local yesBtn = confirmBtn("Delete", 0.5, RED)
 
 closeBtn.MouseButton1Click:Connect(function()
     confirm.Visible = true
