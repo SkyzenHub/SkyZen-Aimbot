@@ -14,7 +14,8 @@ local CONFIG = {
     ESP_ENEMY = false,
     ESP_TEAM = false,
     AIMBOT_ENABLED = false,
-    TEAM_CHECK = false,
+    TEAM_CHECK = true,
+    WALL_CHECK = false,
     DRAW_LINES = false,
 
     AIM_DISTANCE = 120,
@@ -116,15 +117,60 @@ local function GetHead(player)
     return player.Character:FindFirstChild("Head")
 end
 
+-- Cek tembok: apakah kepala target terlihat dari kamera (tidak terhalang dinding)
+local function IsVisible(head, baseIgnore)
+    local origin = Camera.CFrame.Position
+    local direction = head.Position - origin
+
+    local ignore = table.clone(baseIgnore)
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.IgnoreWater = true
+
+    for _ = 1, 6 do
+        params.FilterDescendantsInstances = ignore
+        local result = workspace:Raycast(origin, direction, params)
+        if not result then
+            return true
+        end
+        local part = result.Instance
+        -- Part transparan atau tanpa tabrakan tidak dianggap tembok
+        if part.Transparency >= 0.9 or not part.CanCollide then
+            table.insert(ignore, part)
+        else
+            return false
+        end
+    end
+    return false
+end
+
 local function FindClosestEnemy()
     local closestPlayer = nil
     local closestDistance = CONFIG.AIM_DISTANCE
+
+    local baseIgnore
+    if CONFIG.WALL_CHECK then
+        baseIgnore = {}
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p.Character then
+                table.insert(baseIgnore, p.Character)
+            end
+        end
+    end
+
     for _, player in ipairs(Players:GetPlayers()) do
         if IsEnemy(player) then
             local distance = GetPlayerDistance(player)
             if distance < closestDistance then
-                closestDistance = distance
-                closestPlayer = player
+                local ok = true
+                if CONFIG.WALL_CHECK then
+                    local head = GetHead(player)
+                    ok = head ~= nil and IsVisible(head, baseIgnore)
+                end
+                if ok then
+                    closestDistance = distance
+                    closestPlayer = player
+                end
             end
         end
     end
@@ -210,9 +256,9 @@ local function UpdateESP()
     end
 end
 
-local LineFrame = nil
+local LineFrames = {}
 
-local function GetLine()
+local function GetLineGui()
     local g = LocalPlayer.PlayerGui:FindFirstChild("LineGui")
     if not g then
         g = Instance.new("ScreenGui")
@@ -221,60 +267,60 @@ local function GetLine()
         g.IgnoreGuiInset = true
         g.Parent = LocalPlayer.PlayerGui
     end
-    if not LineFrame or not LineFrame.Parent then
-        LineFrame = Instance.new("Frame")
-        LineFrame.Name = "TraceLine"
-        LineFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-        LineFrame.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
-        LineFrame.BorderSizePixel = 0
-        LineFrame.Visible = false
-        LineFrame.Parent = g
+    return g
+end
+
+local function GetLine(player)
+    local f = LineFrames[player]
+    if not f or not f.Parent then
+        f = Instance.new("Frame")
+        f.Name = "Line_" .. player.Name
+        f.AnchorPoint = Vector2.new(0.5, 0.5)
+        f.BorderSizePixel = 0
+        f.Visible = false
+        f.Parent = GetLineGui()
+        LineFrames[player] = f
     end
-    return LineFrame
+    return f
 end
 
 local function ClearLine()
-    if LineFrame and LineFrame.Parent then
-        LineFrame.Visible = false
+    for _, f in pairs(LineFrames) do
+        if f and f.Parent then
+            f.Visible = false
+        end
     end
 end
 
--- Garis dari tengah-bawah layar ke kepala musuh terdekat
-local function DrawLineToTarget(targetPosition)
-    if not CONFIG.DRAW_LINES or not targetPosition then
-        ClearLine()
-        return
-    end
-
-    local screenPos, onScreen = ScreenPos(targetPosition)
-    if not onScreen then
-        ClearLine()
+-- Garis dari tengah-bawah layar ke kepala SEMUA pemain dalam jarak ESP Distance
+-- Merah = musuh, hijau = satu tim
+local function UpdateLine()
+    ClearLine()
+    if not CONFIG.DRAW_LINES then
         return
     end
 
     local vp = Camera.ViewportSize
     local from = Vector2.new(vp.X / 2, vp.Y)
-    local delta = screenPos - from
-    local mid = from + delta / 2
 
-    local line = GetLine()
-    line.Position = UDim2.new(0, mid.X, 0, mid.Y)
-    line.Size = UDim2.new(0, delta.Magnitude, 0, 2)
-    line.Rotation = math.deg(math.atan2(delta.Y, delta.X))
-    line.Visible = true
-end
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character then
+            local head = GetHead(player)
+            if head and GetPlayerDistance(player) <= CONFIG.ESP_DISTANCE then
+                local screenPos, onScreen = ScreenPos(head.Position)
+                if onScreen then
+                    local delta = screenPos - from
+                    local mid = from + delta / 2
 
-local function UpdateLine()
-    if not CONFIG.DRAW_LINES then
-        ClearLine()
-        return
-    end
-    local target = FindClosestEnemy()
-    local head = target and GetHead(target)
-    if head then
-        DrawLineToTarget(head.Position)
-    else
-        ClearLine()
+                    local line = GetLine(player)
+                    line.BackgroundColor3 = SameTeam(player) and CONFIG.ESP_COLOR_FRIEND or CONFIG.ESP_COLOR_ENEMY
+                    line.Position = UDim2.new(0, mid.X, 0, mid.Y)
+                    line.Size = UDim2.new(0, delta.Magnitude, 0, 2)
+                    line.Rotation = math.deg(math.atan2(delta.Y, delta.X))
+                    line.Visible = true
+                end
+            end
+        end
     end
 end
 
@@ -318,6 +364,10 @@ Players.PlayerRemoving:Connect(function(p)
     if ESPLabels[p] then
         ESPLabels[p]:Destroy()
         ESPLabels[p] = nil
+    end
+    if LineFrames[p] then
+        LineFrames[p]:Destroy()
+        LineFrames[p] = nil
     end
 end)
 
@@ -756,6 +806,7 @@ addToggle(MainTab, "Enable Aimbot", false, function(v) CONFIG.AIMBOT_ENABLED = v
 addToggle(MainTab, "ESP Enemy", false, function(v) CONFIG.ESP_ENEMY = v end)
 addToggle(MainTab, "ESP Team", false, function(v) CONFIG.ESP_TEAM = v end)
 addToggle(MainTab, "Team Check", true, function(v) CONFIG.TEAM_CHECK = v end)
+addToggle(MainTab, "Wall Check", false, function(v) CONFIG.WALL_CHECK = v end)
 addToggle(MainTab, "Draw Line", false, function(v) CONFIG.DRAW_LINES = v if not v then ClearLine() end end)
 
 -- Tab Settings
