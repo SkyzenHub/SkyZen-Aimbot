@@ -16,6 +16,8 @@ local CONFIG = {
     AIMBOT_ENABLED = false,
     TEAM_CHECK = true,
     WALL_CHECK = false,
+    FOV_ENABLED = false,
+    FOV_RADIUS = 120,
     DRAW_LINES = false,
 
     AIM_DISTANCE = 120,
@@ -145,8 +147,10 @@ local function IsVisible(head, baseIgnore)
 end
 
 local function FindClosestEnemy()
-    local closestPlayer = nil
-    local closestDistance = CONFIG.AIM_DISTANCE
+    local bestPlayer = nil
+    local bestScore = math.huge
+    local bestDistance = CONFIG.AIM_DISTANCE
+    local center = Camera.ViewportSize / 2
 
     local baseIgnore
     if CONFIG.WALL_CHECK then
@@ -161,20 +165,36 @@ local function FindClosestEnemy()
     for _, player in ipairs(Players:GetPlayers()) do
         if IsEnemy(player) then
             local distance = GetPlayerDistance(player)
-            if distance < closestDistance then
-                local ok = true
-                if CONFIG.WALL_CHECK then
-                    local head = GetHead(player)
-                    ok = head ~= nil and IsVisible(head, baseIgnore)
-                end
-                if ok then
-                    closestDistance = distance
-                    closestPlayer = player
+            if distance <= CONFIG.AIM_DISTANCE then
+                local head = GetHead(player)
+                if head then
+                    local score = distance
+                    local ok = true
+
+                    -- Mode FOV: hanya target di dalam lingkaran crosshair,
+                    -- yang paling dekat ke tengah layar dipilih
+                    if CONFIG.FOV_ENABLED then
+                        local sp, onScreen = Camera:WorldToViewportPoint(head.Position)
+                        if onScreen then
+                            score = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+                            ok = score <= CONFIG.FOV_RADIUS
+                        else
+                            ok = false
+                        end
+                    end
+
+                    if ok and score < bestScore then
+                        if not CONFIG.WALL_CHECK or IsVisible(head, baseIgnore) then
+                            bestScore = score
+                            bestPlayer = player
+                            bestDistance = distance
+                        end
+                    end
                 end
             end
         end
     end
-    return closestPlayer, closestDistance
+    return bestPlayer, bestDistance
 end
 
 local function ScreenPos(worldPos)
@@ -351,6 +371,51 @@ local function UpdateAimbot()
     end
 end
 
+-- Lingkaran FOV + crosshair di tengah layar
+local FovCircle = nil
+
+local function UpdateFov()
+    local g = LocalPlayer.PlayerGui:FindFirstChild("FovGui")
+    if not CONFIG.FOV_ENABLED then
+        if g then g.Enabled = false end
+        return
+    end
+
+    if not g or not FovCircle or not FovCircle.Parent then
+        if g then g:Destroy() end
+        g = Instance.new("ScreenGui")
+        g.Name = "FovGui"
+        g.ResetOnSpawn = false
+        g.IgnoreGuiInset = true
+        g.Parent = LocalPlayer.PlayerGui
+
+        FovCircle = Instance.new("Frame")
+        FovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+        FovCircle.Position = UDim2.new(0.5, 0, 0.5, 0)
+        FovCircle.BackgroundTransparency = 1
+        FovCircle.Parent = g
+        Instance.new("UICorner", FovCircle).CornerRadius = UDim.new(1, 0)
+        local st = Instance.new("UIStroke", FovCircle)
+        st.Color = Color3.fromRGB(230, 30, 55)
+        st.Thickness = 1.5
+
+        local function bar(w, h)
+            local f = Instance.new("Frame")
+            f.AnchorPoint = Vector2.new(0.5, 0.5)
+            f.Position = UDim2.new(0.5, 0, 0.5, 0)
+            f.Size = UDim2.new(0, w, 0, h)
+            f.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+            f.BorderSizePixel = 0
+            f.Parent = FovCircle
+        end
+        bar(14, 2)
+        bar(2, 14)
+    end
+
+    g.Enabled = true
+    FovCircle.Size = UDim2.new(0, CONFIG.FOV_RADIUS * 2, 0, CONFIG.FOV_RADIUS * 2)
+end
+
 UserInputService.TouchStarted:Connect(function(_, processed)
     if processed then return end
     AimbotActive = true
@@ -375,6 +440,7 @@ RunService.RenderStepped:Connect(function()
     if not CONFIG.ENABLED then return end
     UpdateESP()
     UpdateLine()
+    UpdateFov()
     UpdateAimbot()
 end)
 
@@ -807,6 +873,7 @@ addToggle(MainTab, "ESP Enemy", false, function(v) CONFIG.ESP_ENEMY = v end)
 addToggle(MainTab, "ESP Team", false, function(v) CONFIG.ESP_TEAM = v end)
 addToggle(MainTab, "Team Check", true, function(v) CONFIG.TEAM_CHECK = v end)
 addToggle(MainTab, "Wall Check", false, function(v) CONFIG.WALL_CHECK = v end)
+addToggle(MainTab, "FOV Lock", false, function(v) CONFIG.FOV_ENABLED = v end)
 addToggle(MainTab, "Draw Line", false, function(v) CONFIG.DRAW_LINES = v if not v then ClearLine() end end)
 
 -- Tab Settings
@@ -814,6 +881,7 @@ local SettingsTab = createTab("Settings")
 addSlider(SettingsTab, "Aim Distance", 10, 300, 5, "studs", CONFIG.AIM_DISTANCE, function(v) CONFIG.AIM_DISTANCE = v end)
 addSlider(SettingsTab, "Aim Sensitivity", 0.01, 1, 0.01, "x", CONFIG.AIM_SENSITIVITY, function(v) CONFIG.AIM_SENSITIVITY = v end)
 addSlider(SettingsTab, "ESP Distance", 50, 500, 10, "studs", CONFIG.ESP_DISTANCE, function(v) CONFIG.ESP_DISTANCE = v end)
+addSlider(SettingsTab, "FOV Size", 20, 400, 5, "px", CONFIG.FOV_RADIUS, function(v) CONFIG.FOV_RADIUS = v end)
 addToggle(SettingsTab, "Smooth Aiming", true, function(v) CONFIG.SMOOTH_AIM = v end)
 
 selectTab("Main")
@@ -909,6 +977,9 @@ yesBtn.MouseButton1Click:Connect(function()
     ClearLine()
     local lg = LocalPlayer.PlayerGui:FindFirstChild("LineGui")
     if lg then lg:Destroy() end
+    CONFIG.FOV_ENABLED = false
+    local fg = LocalPlayer.PlayerGui:FindFirstChild("FovGui")
+    if fg then fg:Destroy() end
     gui:Destroy()
 end)
 
