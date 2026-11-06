@@ -486,6 +486,71 @@ gui.ResetOnSpawn = false
 gui.Parent = parent
 
 ------------------------------------------------------------
+-- MUAT GAMBAR (sebelum loading screen tampil)
+------------------------------------------------------------
+-- Foto latar (opsional): isi PHOTO_URL dengan link Raw GitHub fotomu
+local PHOTO_URL = "https://raw.githubusercontent.com/SkyzenHub/SkyZen-Aimbot/refs/heads/main/bt_widget_wordmark.png"
+
+local function isImage(data)
+    if type(data) ~= "string" or #data < 100 then return false end
+    local h = data:sub(1, 4)
+    return h == "\137PNG" or h:sub(1, 2) == "\255\216" or h == "RIFF"
+end
+
+local function loadImage(url, fname)
+    if url == "" then return nil, "URL is empty" end
+    if not writefile then return nil, "executor has no writefile" end
+    local getAsset = getcustomasset or getsynasset
+    if not getAsset then return nil, "executor has no getcustomasset" end
+
+    local data
+
+    -- Cara 1: request (aman untuk data biner)
+    local req = (syn and syn.request) or request or http_request
+    if req then
+        local ok, res = pcall(function() return req({Url = url, Method = "GET"}) end)
+        if ok and res and isImage(res.Body) then data = res.Body end
+    end
+
+    -- Cara 2: HttpGet
+    if not data then
+        local ok, r = pcall(function() return game:HttpGet(url) end)
+        if ok and isImage(r) then data = r end
+    end
+
+    if not data then return nil, "download failed or file is not a valid image" end
+
+    local ok3, err3 = pcall(writefile, fname, data)
+    if not ok3 then return nil, "writefile failed: " .. tostring(err3) end
+
+    local ok4, id = pcall(getAsset, fname)
+    if not ok4 or not id then return nil, "getcustomasset failed" end
+    return id
+end
+
+local photoId, photoErr = loadImage(PHOTO_URL, "skyzenhub_bg.png")
+if photoId then
+    print("[SkyZenHub] Photo loaded")
+else
+    print("[SkyZenHub] Photo failed: " .. tostring(photoErr))
+end
+
+-- Logo (opsional): isi LOGO_URL dengan link Raw GitHub gambar logomu
+local LOGO_URL = "https://raw.githubusercontent.com/SkyzenHub/SkyZen-Aimbot/refs/heads/main/bt_widget_wordmark.png"
+local logoId, logoErr
+if LOGO_URL == PHOTO_URL and photoId then
+    logoId = photoId
+else
+    logoId, logoErr = loadImage(LOGO_URL, "skyzenhub_logo.png")
+end
+if logoId then
+    print("[SkyZenHub] Logo loaded")
+elseif LOGO_URL ~= "" then
+    print("[SkyZenHub] Logo failed: " .. tostring(logoErr))
+end
+
+
+------------------------------------------------------------
 -- LOADING SCREEN
 ------------------------------------------------------------
 local loader = Instance.new("CanvasGroup")
@@ -536,19 +601,32 @@ local lLogoStroke = Instance.new("UIStroke", lLogo)
 lLogoStroke.Color = RED
 lLogoStroke.Thickness = 2
 
-local lLogoText = Instance.new("TextLabel")
-lLogoText.AnchorPoint = Vector2.new(0.5, 0)
-lLogoText.Position = UDim2.new(0.5, 0, 0, 18)
-lLogoText.Size = UDim2.new(0, 56, 0, 56)
-lLogoText.BackgroundTransparency = 1
-lLogoText.Text = "SZ"
-lLogoText.Font = Enum.Font.GothamBlack
-lLogoText.TextSize = 24
-lLogoText.TextColor3 = Color3.new(1, 1, 1)
-lLogoText.TextStrokeColor3 = Color3.new(0, 0, 0)
-lLogoText.TextStrokeTransparency = 0
-lLogoText.ZIndex = 2
-lLogoText.Parent = loader
+if logoId then
+    local lImg = Instance.new("ImageLabel")
+    lImg.AnchorPoint = Vector2.new(0.5, 0)
+    lImg.Position = UDim2.new(0.5, 0, 0, 18)
+    lImg.Size = UDim2.new(0, 56, 0, 56)
+    lImg.BackgroundTransparency = 1
+    lImg.Image = logoId
+    lImg.ScaleType = Enum.ScaleType.Fit
+    lImg.ZIndex = 2
+    lImg.Parent = loader
+    Instance.new("UICorner", lImg).CornerRadius = UDim.new(1, 0)
+else
+    local lLogoText = Instance.new("TextLabel")
+    lLogoText.AnchorPoint = Vector2.new(0.5, 0)
+    lLogoText.Position = UDim2.new(0.5, 0, 0, 18)
+    lLogoText.Size = UDim2.new(0, 56, 0, 56)
+    lLogoText.BackgroundTransparency = 1
+    lLogoText.Text = "SZ"
+    lLogoText.Font = Enum.Font.GothamBlack
+    lLogoText.TextSize = 24
+    lLogoText.TextColor3 = Color3.new(1, 1, 1)
+    lLogoText.TextStrokeColor3 = Color3.new(0, 0, 0)
+    lLogoText.TextStrokeTransparency = 0
+    lLogoText.ZIndex = 2
+    lLogoText.Parent = loader
+end
 
 local lTitle = Instance.new("TextLabel")
 lTitle.Position = UDim2.new(0, 0, 0, 82)
@@ -621,80 +699,6 @@ TS:Create(stroke, TweenInfo.new(1.2, Enum.EasingStyle.Sine, Enum.EasingDirection
 
 setProgress(0.3, "Loading assets...", 1)
 
--- Foto latar (opsional): isi PHOTO_URL dengan link Raw GitHub fotomu
-local PHOTO_URL = "https://raw.githubusercontent.com/SkyzenHub/SkyZen-Aimbot/refs/heads/main/bt_widget_wordmark.png"
-
-local function isImage(data)
-    if type(data) ~= "string" or #data < 100 then return false end
-    local h = data:sub(1, 4)
-    return h == "\137PNG" or h:sub(1, 2) == "\255\216" or h == "RIFF"
-end
-
-local function loadImage(url, fname)
-    if url == "" then return nil, "URL is empty" end
-    if not writefile then return nil, "executor has no writefile" end
-    local getAsset = getcustomasset or getsynasset
-    if not getAsset then return nil, "executor has no getcustomasset" end
-
-    local data
-
-    -- Cara 1: request (aman untuk data biner)
-    local req = (syn and syn.request) or request or http_request
-    if req then
-        local ok, res = pcall(function() return req({Url = url, Method = "GET"}) end)
-        if ok and res and isImage(res.Body) then data = res.Body end
-    end
-
-    -- Cara 2: HttpGet
-    if not data then
-        local ok, r = pcall(function() return game:HttpGet(url) end)
-        if ok and isImage(r) then data = r end
-    end
-
-    if not data then return nil, "download failed or file is not a valid image" end
-
-    local ok3, err3 = pcall(writefile, fname, data)
-    if not ok3 then return nil, "writefile failed: " .. tostring(err3) end
-
-    local ok4, id = pcall(getAsset, fname)
-    if not ok4 or not id then return nil, "getcustomasset failed" end
-    return id
-end
-
-local photoId, photoErr = loadImage(PHOTO_URL, "skyzenhub_bg.png")
-if photoId then
-    print("[SkyZenHub] Photo loaded")
-else
-    print("[SkyZenHub] Photo failed: " .. tostring(photoErr))
-end
-
--- Logo (opsional): isi LOGO_URL dengan link Raw GitHub gambar logomu
-local LOGO_URL = "https://raw.githubusercontent.com/SkyzenHub/SkyZen-Aimbot/refs/heads/main/bt_widget_wordmark.png"
-local logoId, logoErr
-if LOGO_URL == PHOTO_URL and photoId then
-    logoId = photoId
-else
-    logoId, logoErr = loadImage(LOGO_URL, "skyzenhub_logo.png")
-end
-if logoId then
-    print("[SkyZenHub] Logo loaded")
-elseif LOGO_URL ~= "" then
-    print("[SkyZenHub] Logo failed: " .. tostring(logoErr))
-end
-
-if logoId then
-    lLogoText.Visible = false
-    local lImg = Instance.new("ImageLabel")
-    lImg.AnchorPoint = Vector2.new(0.5, 0)
-    lImg.Position = UDim2.new(0.5, 0, 0, 18)
-    lImg.Size = UDim2.new(0, 56, 0, 56)
-    lImg.BackgroundTransparency = 1
-    lImg.Image = logoId
-    lImg.ScaleType = Enum.ScaleType.Fit
-    lImg.ZIndex = 2
-    lImg.Parent = loader
-    Instance.new("UICorner", lImg).CornerRadius = UDim.new(1, 0)
-end
 if photoId then
     local bgImg = Instance.new("ImageLabel")
     bgImg.Size = UDim2.new(1, 0, 1, 0)
