@@ -23,6 +23,8 @@ local CONFIG = {
     HOLO_ENEMY = false,
     HOLO_TEAM = false,
     HOLO_OPACITY = 45,
+    HEALTH_ENEMY = false,
+    HEALTH_TEAM = false,
     FOV_ENABLED = false,
     FOV_RADIUS = 120,
     DRAW_LINES = false,
@@ -43,7 +45,7 @@ local SAVE_KEYS = {
     "AIMBOT_ENABLED", "AUTO_LOCK", "FOV_ENABLED", "WALL_CHECK", "TEAM_CHECK", "SMOOTH_AIM",
     "AIM_DISTANCE", "AIM_SENSITIVITY", "FOV_RADIUS",
     "ESP_ENEMY", "ESP_TEAM", "DRAW_LINES", "ESP_DISTANCE",
-    "HOLO_ENEMY", "HOLO_TEAM", "HOLO_OPACITY",
+    "HOLO_ENEMY", "HOLO_TEAM", "HOLO_OPACITY", "HEALTH_ENEMY", "HEALTH_TEAM",
     "SPEED_ENABLED", "SPEED_VALUE", "INFINITE_JUMP",
 }
 local ConfigLocked = false
@@ -568,6 +570,98 @@ local function UpdateFov()
     FovCircle.Size = UDim2.new(0, CONFIG.FOV_RADIUS * 2, 0, CONFIG.FOV_RADIUS * 2)
 end
 
+-- Health: bar nyawa di bawah kepala pemain (musuh dan tim bisa dipisah)
+local HealthBars = {}
+
+local function CreateHealthBar()
+    local gui = LocalPlayer.PlayerGui:FindFirstChild("HealthGui")
+    if not gui then
+        gui = Instance.new("ScreenGui")
+        gui.Name = "HealthGui"
+        gui.ResetOnSpawn = false
+        gui.IgnoreGuiInset = true
+        gui.Parent = LocalPlayer.PlayerGui
+    end
+
+    local f = Instance.new("Frame")
+    f.Size = UDim2.new(0, 70, 0, 14)
+    f.AnchorPoint = Vector2.new(0.5, 0)
+    f.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    f.BackgroundTransparency = 0.4
+    f.BorderSizePixel = 0
+    f.Visible = false
+    f.Parent = gui
+
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.new(1, 0, 1, 0)
+    fill.BackgroundTransparency = 0.2
+    fill.BorderSizePixel = 0
+    fill.Parent = f
+
+    local txt = Instance.new("TextLabel")
+    txt.Size = UDim2.new(1, 0, 1, 0)
+    txt.BackgroundTransparency = 1
+    txt.Font = Enum.Font.GothamBold
+    txt.TextSize = 10
+    txt.TextColor3 = Color3.new(1, 1, 1)
+    txt.ZIndex = 2
+    txt.Parent = f
+
+    return {frame = f, fill = fill, txt = txt}
+end
+
+local function RemoveHealthBar(player)
+    local bar = HealthBars[player]
+    if bar then
+        bar.frame:Destroy()
+        HealthBars[player] = nil
+    end
+end
+
+local function UpdateHealth()
+    if not (CONFIG.HEALTH_ENEMY or CONFIG.HEALTH_TEAM) then
+        for player in pairs(HealthBars) do
+            RemoveHealthBar(player)
+        end
+        return
+    end
+
+    for _, bar in pairs(HealthBars) do
+        bar.frame.Visible = false
+    end
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local char = player.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            local head = GetHead(player)
+            local friend = SameTeam(player)
+            local wanted = (friend and CONFIG.HEALTH_TEAM) or ((not friend) and CONFIG.HEALTH_ENEMY)
+
+            if wanted and hum and head and hum.Health > 0 and GetPlayerDistance(player) <= CONFIG.ESP_DISTANCE then
+                local screenPos, onScreen = ScreenPos(head.Position)
+                if onScreen then
+                    local bar = HealthBars[player]
+                    if not bar or not bar.frame.Parent then
+                        bar = CreateHealthBar()
+                        HealthBars[player] = bar
+                    end
+
+                    local maxHp = math.max(hum.MaxHealth, 1)
+                    local ratio = math.clamp(hum.Health / maxHp, 0, 1)
+                    bar.fill.Size = UDim2.new(ratio, 0, 1, 0)
+                    bar.fill.BackgroundColor3 = Color3.new(1 - ratio, ratio, 0)
+                    bar.txt.Text = tostring(math.ceil(hum.Health)) .. "/" .. tostring(math.ceil(maxHp))
+                    bar.frame.Position = UDim2.new(0, screenPos.X, 0, screenPos.Y + 4)
+                    bar.frame.Visible = true
+                end
+            elseif HealthBars[player] and not wanted then
+                RemoveHealthBar(player)
+            end
+        end
+    end
+end
+
 -- Infinite Jump: lompat lagi di udara setiap kali tombol lompat ditekan
 UserInputService.JumpRequest:Connect(function()
     if not CONFIG.INFINITE_JUMP then return end
@@ -606,6 +700,7 @@ Players.PlayerRemoving:Connect(function(p)
         LineFrames[p] = nil
     end
     RemoveHolo(p)
+    RemoveHealthBar(p)
 end)
 
 RunService.RenderStepped:Connect(function()
@@ -615,6 +710,7 @@ RunService.RenderStepped:Connect(function()
     UpdateFov()
     UpdateSpeed()
     UpdateHolo()
+    UpdateHealth()
 end)
 
 -- Jalan tepat setelah kamera bawaan Roblox, supaya tidak ditimpa
@@ -1180,10 +1276,12 @@ addToggle(EspTab, "ESP Team", CONFIG.ESP_TEAM, function(v) CONFIG.ESP_TEAM = v e
 addToggle(EspTab, "Draw Line", CONFIG.DRAW_LINES, function(v) CONFIG.DRAW_LINES = v if not v then ClearLine() end end)
 addSlider(EspTab, "ESP Distance", 50, 500, 10, "studs", CONFIG.ESP_DISTANCE, function(v) CONFIG.ESP_DISTANCE = v end)
 
--- Tab Holo (ESP Hologram)
-local HoloTab = createTab("Holo")
+-- Tab Visual (ESP Hologram dan Health)
+local HoloTab = createTab("Visual")
 addToggle(HoloTab, "Hologram Enemy", CONFIG.HOLO_ENEMY, function(v) CONFIG.HOLO_ENEMY = v end)
 addToggle(HoloTab, "Hologram Team", CONFIG.HOLO_TEAM, function(v) CONFIG.HOLO_TEAM = v end)
+addToggle(HoloTab, "Health Enemy", CONFIG.HEALTH_ENEMY, function(v) CONFIG.HEALTH_ENEMY = v end)
+addToggle(HoloTab, "Health Team", CONFIG.HEALTH_TEAM, function(v) CONFIG.HEALTH_TEAM = v end)
 addSlider(HoloTab, "Opacity", 10, 90, 5, "%", CONFIG.HOLO_OPACITY, function(v) CONFIG.HOLO_OPACITY = v end)
 
 -- Tab Settings (pengaturan aimbot)
@@ -1292,6 +1390,11 @@ yesBtn.MouseButton1Click:Connect(function()
     CONFIG.HOLO_ENEMY = false
     CONFIG.HOLO_TEAM = false
     UpdateHolo()
+    CONFIG.HEALTH_ENEMY = false
+    CONFIG.HEALTH_TEAM = false
+    UpdateHealth()
+    local hg = LocalPlayer.PlayerGui:FindFirstChild("HealthGui")
+    if hg then hg:Destroy() end
     CONFIG.ENABLED = false
     pcall(function() RunService:UnbindFromRenderStep("SkyZenHubAim") end)
     CONFIG.ESP_ENEMY = false
