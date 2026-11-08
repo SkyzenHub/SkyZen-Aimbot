@@ -50,7 +50,7 @@ local CONFIG = {
     FOV_RADIUS = 120,
     DRAW_LINES = false,
 
-    AIM_DISTANCE = 120,
+    AIM_DISTANCE = 500,
     AIM_SENSITIVITY = 0.12,
     SMOOTH_AIM = true,
 
@@ -1342,7 +1342,7 @@ addSlider(HoloTab, "Opacity", 10, 90, 5, "%", CONFIG.HOLO_OPACITY, function(v) C
 
 local SettingsTab = createTab("Settings")
 addToggle(SettingsTab, "Smooth Aiming", CONFIG.SMOOTH_AIM, function(v) CONFIG.SMOOTH_AIM = v end)
-addSlider(SettingsTab, "Aim Distance", 10, 300, 5, "studs", CONFIG.AIM_DISTANCE, function(v) CONFIG.AIM_DISTANCE = v end)
+addSlider(SettingsTab, "Aim Distance", 10, 500, 5, "studs", CONFIG.AIM_DISTANCE, function(v) CONFIG.AIM_DISTANCE = v end)
 addSlider(SettingsTab, "Aim Sensitivity", 0.01, 1, 0.01, "x", CONFIG.AIM_SENSITIVITY, function(v) CONFIG.AIM_SENSITIVITY = v end)
 addSlider(SettingsTab, "FOV Size", 20, 400, 5, "px", CONFIG.FOV_RADIUS, function(v) CONFIG.FOV_RADIUS = v end)
 
