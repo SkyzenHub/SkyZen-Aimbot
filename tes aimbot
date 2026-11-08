@@ -1,3 +1,274 @@
+------------------------------------------------------------
+-- KEY SYSTEM
+-- Fitur script baru dijalankan setelah key valid.
+------------------------------------------------------------
+do
+    local KEY_URL = "https://web-key-system.netlify.app/api/check"
+    local KEY_FILE = "SkyZenHub_Key.txt"
+
+    -- Gambar untuk tampilan key. Kosongkan ("") kalau tidak mau pakai gambar.
+    local KEY_BG_URL = "https://raw.githubusercontent.com/SkyzenHub/SkyZen-Aimbot/refs/heads/main/bt_widget_wordmark.png"
+    local KEY_LOGO_URL = "https://raw.githubusercontent.com/SkyzenHub/SkyZen-Aimbot/refs/heads/main/bt_widget_wordmark.png"
+
+    local Players = game:GetService("Players")
+    local HttpService = game:GetService("HttpService")
+    local Analytics = game:GetService("RbxAnalyticsService")
+    local LP = Players.LocalPlayer
+    local HWID = Analytics:GetClientId()
+    local parent = (gethui and gethui()) or game:GetService("CoreGui")
+
+    -- Key tidak disimpan. Hapus file key lama dari versi sebelumnya (kalau ada).
+    if isfile and delfile then
+        pcall(function()
+            if isfile(KEY_FILE) then delfile(KEY_FILE) end
+        end)
+    end
+
+    local RED = Color3.fromRGB(230, 30, 55)
+    local verified = false
+    local busy = false
+
+    local old = parent:FindFirstChild("SkyZenKeyGui")
+    if old then old:Destroy() end
+
+    local kg = Instance.new("ScreenGui")
+    kg.Name = "SkyZenKeyGui"
+    kg.ResetOnSpawn = false
+    kg.Parent = parent
+
+    local fr = Instance.new("Frame", kg)
+    fr.AnchorPoint = Vector2.new(0.5, 0.5)
+    fr.Position = UDim2.new(0.5, 0, 0.5, 0)
+    fr.Size = UDim2.new(0, 290, 0, 260)
+    fr.BackgroundColor3 = Color3.fromRGB(10, 10, 14)
+    fr.ClipsDescendants = true
+    fr.Active = true
+    Instance.new("UICorner", fr).CornerRadius = UDim.new(0, 12)
+    local st = Instance.new("UIStroke", fr)
+    st.Color = RED
+    st.Thickness = 1.5
+
+    -- Latar gambar (muncul setelah gambar selesai diunduh)
+    local bgImg = Instance.new("ImageLabel", fr)
+    bgImg.Size = UDim2.new(1, 0, 1, 0)
+    bgImg.BackgroundTransparency = 1
+    bgImg.ScaleType = Enum.ScaleType.Crop
+    bgImg.ImageTransparency = 1
+    bgImg.ZIndex = 1
+    Instance.new("UICorner", bgImg).CornerRadius = UDim.new(0, 12)
+
+    local shade = Instance.new("Frame", fr)
+    shade.Size = UDim2.new(1, 0, 1, 0)
+    shade.BackgroundColor3 = Color3.new(0, 0, 0)
+    shade.BackgroundTransparency = 0.45
+    shade.BorderSizePixel = 0
+    shade.ZIndex = 2
+    Instance.new("UICorner", shade).CornerRadius = UDim.new(0, 12)
+
+    -- Logo bulat di atas
+    local logoFrame = Instance.new("Frame", fr)
+    logoFrame.AnchorPoint = Vector2.new(0.5, 0)
+    logoFrame.Position = UDim2.new(0.5, 0, 0, 14)
+    logoFrame.Size = UDim2.new(0, 60, 0, 60)
+    logoFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 26)
+    logoFrame.ZIndex = 3
+    Instance.new("UICorner", logoFrame).CornerRadius = UDim.new(1, 0)
+    local logoStroke = Instance.new("UIStroke", logoFrame)
+    logoStroke.Color = RED
+    logoStroke.Thickness = 2
+
+    local logoImg = Instance.new("ImageLabel", logoFrame)
+    logoImg.Size = UDim2.new(1, 0, 1, 0)
+    logoImg.BackgroundTransparency = 1
+    logoImg.ScaleType = Enum.ScaleType.Fit
+    logoImg.ImageTransparency = 1
+    logoImg.ZIndex = 4
+    Instance.new("UICorner", logoImg).CornerRadius = UDim.new(1, 0)
+
+    local ttl = Instance.new("TextLabel", fr)
+    ttl.Size = UDim2.new(1, 0, 0, 26)
+    ttl.Position = UDim2.new(0, 0, 0, 80)
+    ttl.BackgroundTransparency = 1
+    ttl.Text = "SkyZenHub"
+    ttl.Font = Enum.Font.GothamBlack
+    ttl.TextSize = 16
+    ttl.TextColor3 = Color3.fromRGB(235, 235, 240)
+    ttl.ZIndex = 3
+
+    local kb = Instance.new("TextBox", fr)
+    kb.Size = UDim2.new(1, -86, 0, 38)
+    kb.Position = UDim2.new(0, 15, 0, 114)
+    kb.BackgroundColor3 = Color3.fromRGB(25, 25, 32)
+    kb.BackgroundTransparency = 0.15
+    kb.PlaceholderText = "Enter key"
+    kb.Text = ""
+    kb.ClearTextOnFocus = false
+    kb.Font = Enum.Font.GothamBold
+    kb.TextSize = 14
+    kb.TextColor3 = Color3.new(1, 1, 1)
+    kb.ZIndex = 3
+    Instance.new("UICorner", kb).CornerRadius = UDim.new(0, 8)
+
+    -- Teks key: default disembunyikan ("*"), bisa dilihat lewat tombol Lihat/Tutup.
+    -- Key asli selalu disimpan di realKey.
+    local realKey = ""
+    local masking = false
+    local showKey = false
+
+    local function renderKey()
+        masking = true
+        kb.Text = showKey and realKey or string.rep("*", #realKey)
+        masking = false
+    end
+
+    kb:GetPropertyChangedSignal("Text"):Connect(function()
+        if masking then return end
+        local t = kb.Text:gsub("%s", "")
+        if showKey then
+            realKey = t
+        else
+            local stars = select(2, t:gsub("%*", ""))
+            local added = t:gsub("%*", "")
+            realKey = realKey:sub(1, stars) .. added
+        end
+        renderKey()
+    end)
+
+    local eye = Instance.new("TextButton", fr)
+    eye.Size = UDim2.new(0, 52, 0, 38)
+    eye.Position = UDim2.new(1, -67, 0, 114)
+    eye.BackgroundColor3 = Color3.fromRGB(35, 35, 44)
+    eye.Text = "Show"
+    eye.Font = Enum.Font.GothamBold
+    eye.TextSize = 12
+    eye.TextColor3 = Color3.new(1, 1, 1)
+    eye.ZIndex = 3
+    Instance.new("UICorner", eye).CornerRadius = UDim.new(0, 8)
+
+    eye.MouseButton1Click:Connect(function()
+        showKey = not showKey
+        eye.Text = showKey and "Hide" or "Show"
+        renderKey()
+    end)
+
+    local btn = Instance.new("TextButton", fr)
+    btn.Size = UDim2.new(1, -30, 0, 38)
+    btn.Position = UDim2.new(0, 15, 0, 160)
+    btn.BackgroundColor3 = RED
+    btn.Text = "Verify"
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 14
+    btn.TextColor3 = Color3.new(1, 1, 1)
+    btn.ZIndex = 3
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+
+    local status = Instance.new("TextLabel", fr)
+    status.Size = UDim2.new(1, -30, 0, 40)
+    status.Position = UDim2.new(0, 15, 0, 206)
+    status.BackgroundTransparency = 1
+    status.Text = ""
+    status.Font = Enum.Font.Gotham
+    status.TextSize = 12
+    status.TextWrapped = true
+    status.TextColor3 = Color3.fromRGB(210, 210, 220)
+    status.ZIndex = 3
+
+    -- Unduh gambar di belakang layar, kotak key tetap langsung tampil
+    local function keyImage(url, fname)
+        if url == "" or not writefile then return nil end
+        local getAsset = getcustomasset or getsynasset
+        if not getAsset then return nil end
+
+        local function isImg(d)
+            if type(d) ~= "string" or #d < 100 then return false end
+            local h = d:sub(1, 4)
+            return h == "\137PNG" or h:sub(1, 2) == "\255\216" or h == "RIFF"
+        end
+
+        local data
+        local req = (syn and syn.request) or request or http_request
+        if req then
+            local ok, res = pcall(function() return req({Url = url, Method = "GET"}) end)
+            if ok and res and isImg(res.Body) then data = res.Body end
+        end
+        if not data then
+            local ok, r = pcall(function() return game:HttpGet(url) end)
+            if ok and isImg(r) then data = r end
+        end
+        if not data then return nil end
+        if not pcall(writefile, fname, data) then return nil end
+        local ok, id = pcall(getAsset, fname)
+        if ok then return id end
+        return nil
+    end
+
+    task.spawn(function()
+        local bgId = keyImage(KEY_BG_URL, "skyzenhub_bg.png")
+        if bgId and bgImg.Parent then
+            bgImg.Image = bgId
+            bgImg.ImageTransparency = 0
+        end
+
+        local logoId
+        if KEY_LOGO_URL == KEY_BG_URL then
+            logoId = bgId
+        else
+            logoId = keyImage(KEY_LOGO_URL, "skyzenhub_logo.png")
+        end
+        if logoId and logoImg.Parent then
+            logoImg.Image = logoId
+            logoImg.ImageTransparency = 0
+        end
+    end)
+
+    local MESSAGES = {
+        KEY_SALAH = "Invalid key!",
+        HWID_SALAH = "This key is already used on another device!",
+        EXPIRED = "This key has expired!",
+    }
+
+    btn.MouseButton1Click:Connect(function()
+        if busy or verified then return end
+        local key = realKey
+        if key == "" then
+            status.Text = "Please enter a key."
+            return
+        end
+
+        busy = true
+        status.Text = "Checking key..."
+
+        local ok, res = pcall(function()
+            return game:HttpGet(KEY_URL .. "?key=" .. HttpService:UrlEncode(key) .. "&hwid=" .. HttpService:UrlEncode(HWID))
+        end)
+
+        if not ok then
+            status.Text = "Failed to connect to the server. Try again."
+            busy = false
+            return
+        end
+
+        res = tostring(res):gsub("%s", "")
+        if res == "OK" then
+            status.Text = "Key valid!"
+            task.wait(0.4)
+            kg:Destroy()
+            verified = true
+        else
+            local msg = MESSAGES[res] or "Invalid key!"
+            status.Text = msg
+            task.wait(1.5)
+            LP:Kick(msg)
+        end
+    end)
+
+    -- Tahan seluruh script di sini sampai key valid
+    repeat task.wait(0.2) until verified
+end
+
+------------------------------------------------------------
+-- SKYZENHUB
+------------------------------------------------------------
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -31,7 +302,7 @@ end
 -- CONFIG
 ------------------------------------------------------------
 local CONFIG = {
-    ENABLED = true,
+    ENABLED = false, -- baru jadi true setelah loading UI selesai
     ESP_ENEMY = false,
     ESP_TEAM = false,
     AIMBOT_ENABLED = false,
@@ -747,7 +1018,7 @@ end
 -- INFINITE JUMP + SENTUHAN AIMBOT
 ------------------------------------------------------------
 Connect(UserInputService.JumpRequest, function()
-    if not CONFIG.INFINITE_JUMP then return end
+    if not CONFIG.ENABLED or not CONFIG.INFINITE_JUMP then return end
     local char = LocalPlayer.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if hum then
@@ -1503,6 +1774,9 @@ setProgress(1, "Ready", 0.4)
 task.wait(0.6)
 
 if not running then return end -- sudah di-delete / digantikan saat loading
+
+-- Loading selesai: baru sekarang semua fitur boleh aktif
+CONFIG.ENABLED = true
 
 local mainScale = Instance.new("UIScale", main)
 mainScale.Scale = 0.85
