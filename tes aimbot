@@ -1,0 +1,1513 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TS = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
+
+local Camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+
+local ENV = (getgenv and getgenv()) or _G
+local GuiParent = (gethui and gethui()) or game:GetService("CoreGui")
+
+-- Kalau script dijalankan ulang, matikan versi lama dulu (tidak numpuk)
+if ENV.SkyZenHubCleanup then
+    pcall(ENV.SkyZenHubCleanup)
+end
+
+------------------------------------------------------------
+-- KONEKSI (semua disimpan supaya bisa dilepas saat Delete)
+------------------------------------------------------------
+local Conns = {}
+local running = true
+
+local function Connect(signal, fn)
+    local c = signal:Connect(fn)
+    table.insert(Conns, c)
+    return c
+end
+
+------------------------------------------------------------
+-- CONFIG
+------------------------------------------------------------
+local CONFIG = {
+    ENABLED = true,
+    ESP_ENEMY = false,
+    ESP_TEAM = false,
+    AIMBOT_ENABLED = false,
+    TEAM_CHECK = true,
+    WALL_CHECK = false,
+    AUTO_LOCK = false,
+    SPEED_ENABLED = false,
+    SPEED_VALUE = 32,
+    INFINITE_JUMP = false,
+    HOLO_ENEMY = false,
+    HOLO_TEAM = false,
+    HOLO_OPACITY = 45,
+    HEALTH_ENEMY = false,
+    HEALTH_TEAM = false,
+    FOV_ENABLED = false,
+    FOV_RADIUS = 120,
+    DRAW_LINES = false,
+
+    AIM_DISTANCE = 120,
+    AIM_SENSITIVITY = 0.12,
+    SMOOTH_AIM = true,
+
+    ESP_DISTANCE = 250,
+    ESP_COLOR_ENEMY = Color3.fromRGB(255, 0, 0),
+    ESP_COLOR_FRIEND = Color3.fromRGB(0, 255, 0),
+}
+
+------------------------------------------------------------
+-- AUTO SAVE
+------------------------------------------------------------
+local SAVE_FILE = "SkyZenHub_Config.json"
+local SAVE_KEYS = {
+    "AIMBOT_ENABLED", "AUTO_LOCK", "FOV_ENABLED", "WALL_CHECK", "TEAM_CHECK", "SMOOTH_AIM",
+    "AIM_DISTANCE", "AIM_SENSITIVITY", "FOV_RADIUS",
+    "ESP_ENEMY", "ESP_TEAM", "DRAW_LINES", "ESP_DISTANCE",
+    "HOLO_ENEMY", "HOLO_TEAM", "HOLO_OPACITY", "HEALTH_ENEMY", "HEALTH_TEAM",
+    "SPEED_ENABLED", "SPEED_VALUE", "INFINITE_JUMP",
+}
+local ConfigLocked = false
+
+local function LoadConfig()
+    if not (isfile and readfile) then return end
+    local ok, data = pcall(function()
+        if not isfile(SAVE_FILE) then return nil end
+        return HttpService:JSONDecode(readfile(SAVE_FILE))
+    end)
+    if ok and type(data) == "table" then
+        for _, key in ipairs(SAVE_KEYS) do
+            local v = data[key]
+            if v ~= nil and type(v) == type(CONFIG[key]) then
+                CONFIG[key] = v
+            end
+        end
+        print("[SkyZenHub] Settings loaded")
+    end
+end
+
+local function SaveNow()
+    if not writefile or ConfigLocked then return end
+    local data = {}
+    for _, key in ipairs(SAVE_KEYS) do
+        data[key] = CONFIG[key]
+    end
+    pcall(function()
+        writefile(SAVE_FILE, HttpService:JSONEncode(data))
+    end)
+end
+
+local savePending = false
+local function SaveConfig()
+    if savePending then return end
+    savePending = true
+    task.delay(0.5, function()
+        savePending = false
+        SaveNow()
+    end)
+end
+
+LoadConfig()
+
+------------------------------------------------------------
+-- HELPER GUI
+------------------------------------------------------------
+local function GetGui(name)
+    local g = GuiParent:FindFirstChild(name)
+    if not g then
+        g = Instance.new("ScreenGui")
+        g.Name = name
+        g.ResetOnSpawn = false
+        g.IgnoreGuiInset = true
+        g.Parent = GuiParent
+    end
+    return g
+end
+
+------------------------------------------------------------
+-- TIM (pakai cache, diperbarui lewat event supaya cepat)
+------------------------------------------------------------
+local ESPLabels = {}
+local AimbotActive = false
+
+local TEAM_NAMES = {"Team", "team", "TeamName", "Side", "Faction"}
+
+local function ValueToKey(v)
+    if v == nil then return nil end
+    if typeof(v) == "Instance" then return "I:" .. v.Name end
+    return "V:" .. tostring(v)
+end
+
+local function ComputeTeamKey(player)
+    -- 1. Sistem Team bawaan Roblox
+    if player.Team then
+        return "T:" .. player.Team.Name
+    end
+
+    -- 2. TeamColor (kalau pemain tidak netral)
+    if not player.Neutral then
+        return "C:" .. tostring(player.TeamColor)
+    end
+
+    -- 3. Attribute pada pemain atau karakter
+    for _, name in ipairs(TEAM_NAMES) do
+        local v = player:GetAttribute(name)
+        if v == nil and player.Character then
+            v = player.Character:GetAttribute(name)
+        end
+        if v ~= nil then
+            return "A:" .. tostring(v)
+        end
+    end
+
+    -- 4. Value (StringValue, ObjectValue, dll) di pemain atau leaderstats
+    local holders = {player, player:FindFirstChild("leaderstats")}
+    for _, holder in ipairs(holders) do
+        if holder then
+            for _, name in ipairs(TEAM_NAMES) do
+                local obj = holder:FindFirstChild(name)
+                if obj and obj:IsA("ValueBase") then
+                    local key = ValueToKey(obj.Value)
+                    if key then return key end
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
+local TeamCache = {}
+
+local function RefreshTeam(player)
+    TeamCache[player] = ComputeTeamKey(player) or false
+end
+
+local function GetTeamKey(player)
+    local k = TeamCache[player]
+    if k == nil then
+        RefreshTeam(player)
+        k = TeamCache[player]
+    end
+    return k or nil
+end
+
+local function HookChar(player, char)
+    RefreshTeam(player)
+    Connect(char.AttributeChanged, function() RefreshTeam(player) end)
+end
+
+local function HookPlayer(player)
+    RefreshTeam(player)
+    Connect(player:GetPropertyChangedSignal("Team"), function() RefreshTeam(player) end)
+    Connect(player:GetPropertyChangedSignal("TeamColor"), function() RefreshTeam(player) end)
+    Connect(player:GetPropertyChangedSignal("Neutral"), function() RefreshTeam(player) end)
+    Connect(player.AttributeChanged, function() RefreshTeam(player) end)
+    Connect(player.CharacterAdded, function(char) HookChar(player, char) end)
+    if player.Character then HookChar(player, player.Character) end
+end
+
+for _, p in ipairs(Players:GetPlayers()) do HookPlayer(p) end
+Connect(Players.PlayerAdded, HookPlayer)
+
+-- Cadangan untuk game yang memakai Value/leaderstats sebagai tim
+task.spawn(function()
+    while running do
+        task.wait(0.2)
+        for _, p in ipairs(Players:GetPlayers()) do
+            RefreshTeam(p)
+        end
+    end
+end)
+
+local function SameTeam(player)
+    if player == LocalPlayer then
+        return true
+    end
+    local myKey = GetTeamKey(LocalPlayer)
+    local theirKey = GetTeamKey(player)
+    if not myKey or not theirKey then
+        return false
+    end
+    return myKey == theirKey
+end
+
+-- Teman = satu tim DAN Team Check aktif. Team Check OFF: semua dianggap musuh.
+local function IsFriend(player)
+    if not CONFIG.TEAM_CHECK then return false end
+    return SameTeam(player)
+end
+
+local function IsEnemy(player)
+    if player == LocalPlayer then return false end
+    return not IsFriend(player)
+end
+
+------------------------------------------------------------
+-- HELPER KARAKTER
+------------------------------------------------------------
+local function GetRoot(player)
+    local c = player.Character
+    if not c then return nil end
+    return c:FindFirstChild("HumanoidRootPart") or c.PrimaryPart or c:FindFirstChildWhichIsA("BasePart")
+end
+
+local function GetHead(player)
+    local c = player.Character
+    if not c then return nil end
+    return c:FindFirstChild("Head") or GetRoot(player)
+end
+
+local function IsAlive(player)
+    local c = player.Character
+    local h = c and c:FindFirstChildOfClass("Humanoid")
+    return h ~= nil and h.Health > 0
+end
+
+local function GetPlayerDistance(player)
+    local me, them = GetRoot(LocalPlayer), GetRoot(player)
+    if not me or not them then return math.huge end
+    return (me.Position - them.Position).Magnitude
+end
+
+------------------------------------------------------------
+-- WALL CHECK
+------------------------------------------------------------
+local okE, FILTER = pcall(function() return Enum.RaycastFilterType.Exclude end)
+if not okE or FILTER == nil then
+    FILTER = Enum.RaycastFilterType.Blacklist
+end
+
+local function IsVisible(head, baseIgnore)
+    local origin = Camera.CFrame.Position
+    local direction = head.Position - origin
+
+    local ignore = {}
+    for i, v in ipairs(baseIgnore) do ignore[i] = v end
+
+    local params = RaycastParams.new()
+    params.FilterType = FILTER
+    params.IgnoreWater = true
+
+    for _ = 1, 6 do
+        params.FilterDescendantsInstances = ignore
+        local result = workspace:Raycast(origin, direction, params)
+        if not result then
+            return true
+        end
+        local part = result.Instance
+        if part.Transparency >= 0.9 or not part.CanCollide then
+            table.insert(ignore, part)
+        else
+            return false
+        end
+    end
+    return false
+end
+
+local function FindClosestEnemy()
+    local bestPlayer = nil
+    local bestScore = math.huge
+    local bestDistance = CONFIG.AIM_DISTANCE
+    local center = Camera.ViewportSize / 2
+
+    local baseIgnore
+    if CONFIG.WALL_CHECK then
+        baseIgnore = {}
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p.Character then
+                table.insert(baseIgnore, p.Character)
+            end
+        end
+    end
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if IsEnemy(player) and IsAlive(player) then
+            local distance = GetPlayerDistance(player)
+            if distance <= CONFIG.AIM_DISTANCE then
+                local head = GetHead(player)
+                if head then
+                    local score = distance
+                    local ok = true
+
+                    if CONFIG.FOV_ENABLED then
+                        local sp, onScreen = Camera:WorldToViewportPoint(head.Position)
+                        if onScreen then
+                            score = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+                            ok = score <= CONFIG.FOV_RADIUS
+                        else
+                            ok = false
+                        end
+                    end
+
+                    if ok and score < bestScore then
+                        if not CONFIG.WALL_CHECK or IsVisible(head, baseIgnore) then
+                            bestScore = score
+                            bestPlayer = player
+                            bestDistance = distance
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return bestPlayer, bestDistance
+end
+
+local function ScreenPos(worldPos)
+    local pos, onScreen = Camera:WorldToViewportPoint(worldPos)
+    return Vector2.new(pos.X, pos.Y), onScreen
+end
+
+------------------------------------------------------------
+-- ESP LABEL
+------------------------------------------------------------
+local function CreateESPLabel(player)
+    local gui = GetGui("ESPGui")
+    local label = Instance.new("TextLabel")
+    label.Name = "ESP_" .. player.Name
+    label.Size = UDim2.new(0, 120, 0, 18)
+    label.AnchorPoint = Vector2.new(0.5, 1)
+    label.BackgroundTransparency = 0.4
+    label.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    label.TextColor3 = Color3.fromRGB(255, 255, 255)
+    label.TextSize = 12
+    label.Font = Enum.Font.GothamBold
+    label.BorderSizePixel = 0
+    label.Visible = false
+    label.Parent = gui
+    return label
+end
+
+local function UpdateESP()
+    if not (CONFIG.ESP_ENEMY or CONFIG.ESP_TEAM) then
+        for _, label in pairs(ESPLabels) do
+            label:Destroy()
+        end
+        ESPLabels = {}
+        return
+    end
+
+    for _, label in pairs(ESPLabels) do
+        label.Visible = false
+    end
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local friend = IsFriend(player)
+            local wanted = ((friend and CONFIG.ESP_TEAM) or ((not friend) and CONFIG.ESP_ENEMY))
+                and IsAlive(player)
+                and GetRoot(player) ~= nil
+                and GetPlayerDistance(player) <= CONFIG.ESP_DISTANCE
+
+            local label = ESPLabels[player]
+            if wanted then
+                local head = GetHead(player)
+                if head then
+                    local screenPos, onScreen = ScreenPos(head.Position)
+                    if onScreen then
+                        if not label or not label.Parent then
+                            label = CreateESPLabel(player)
+                            ESPLabels[player] = label
+                        end
+                        label.Visible = true
+                        label.Position = UDim2.new(screenPos.X / Camera.ViewportSize.X, 0, screenPos.Y / Camera.ViewportSize.Y, 0)
+                        label.TextColor3 = friend and CONFIG.ESP_COLOR_FRIEND or CONFIG.ESP_COLOR_ENEMY
+                        label.Text = player.Name .. " (" .. tostring(math.floor(GetPlayerDistance(player))) .. ")"
+                    end
+                end
+            elseif label then
+                label:Destroy()
+                ESPLabels[player] = nil
+            end
+        end
+    end
+end
+
+------------------------------------------------------------
+-- GARIS
+------------------------------------------------------------
+local LineFrames = {}
+
+local function GetLine(player)
+    local f = LineFrames[player]
+    if not f or not f.Parent then
+        f = Instance.new("Frame")
+        f.Name = "Line_" .. player.Name
+        f.AnchorPoint = Vector2.new(0.5, 0.5)
+        f.BorderSizePixel = 0
+        f.Visible = false
+        f.Parent = GetGui("LineGui")
+        LineFrames[player] = f
+    end
+    return f
+end
+
+local function ClearLine()
+    for _, f in pairs(LineFrames) do
+        if f and f.Parent then
+            f.Visible = false
+        end
+    end
+end
+
+local function UpdateLine()
+    ClearLine()
+    if not CONFIG.DRAW_LINES then
+        return
+    end
+
+    local vp = Camera.ViewportSize
+    local from = Vector2.new(vp.X / 2, vp.Y)
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and IsAlive(player) then
+            local head = GetHead(player)
+            if head and GetPlayerDistance(player) <= CONFIG.ESP_DISTANCE then
+                local screenPos, onScreen = ScreenPos(head.Position)
+                if onScreen then
+                    local delta = screenPos - from
+                    local mid = from + delta / 2
+
+                    local line = GetLine(player)
+                    line.BackgroundColor3 = IsFriend(player) and CONFIG.ESP_COLOR_FRIEND or CONFIG.ESP_COLOR_ENEMY
+                    line.Position = UDim2.new(0, mid.X, 0, mid.Y)
+                    line.Size = UDim2.new(0, delta.Magnitude, 0, 2)
+                    line.Rotation = math.deg(math.atan2(delta.Y, delta.X))
+                    line.Visible = true
+                end
+            end
+        end
+    end
+end
+
+------------------------------------------------------------
+-- AIMBOT
+------------------------------------------------------------
+local aimDir = nil
+
+local function UpdateAimbot()
+    if not CONFIG.AIMBOT_ENABLED or not (AimbotActive or CONFIG.AUTO_LOCK) then
+        aimDir = nil
+        return
+    end
+
+    local target, distance = FindClosestEnemy()
+    if not target or distance > CONFIG.AIM_DISTANCE then
+        aimDir = nil
+        return
+    end
+
+    local head = GetHead(target)
+    if not head then
+        aimDir = nil
+        return
+    end
+
+    local cameraPos = Camera.CFrame.Position
+    local direction = (head.Position - cameraPos).Unit
+
+    if CONFIG.SMOOTH_AIM and CONFIG.AIM_SENSITIVITY < 0.99 then
+        if not aimDir then
+            aimDir = Camera.CFrame.LookVector
+        end
+        aimDir = aimDir:Lerp(direction, CONFIG.AIM_SENSITIVITY).Unit
+        Camera.CFrame = CFrame.new(cameraPos, cameraPos + aimDir)
+    else
+        aimDir = nil
+        Camera.CFrame = CFrame.new(cameraPos, head.Position)
+    end
+end
+
+------------------------------------------------------------
+-- SPEED
+------------------------------------------------------------
+local OriginalSpeed = nil
+local SpeedHum = nil
+
+local function UpdateSpeed()
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not hum then
+        return
+    end
+
+    if hum ~= SpeedHum then
+        SpeedHum = hum
+        OriginalSpeed = nil
+    end
+
+    if CONFIG.SPEED_ENABLED then
+        if not OriginalSpeed then
+            OriginalSpeed = hum.WalkSpeed
+        end
+        hum.WalkSpeed = CONFIG.SPEED_VALUE
+    elseif OriginalSpeed then
+        hum.WalkSpeed = OriginalSpeed
+        OriginalSpeed = nil
+    end
+end
+
+------------------------------------------------------------
+-- HOLOGRAM
+------------------------------------------------------------
+local HoloObjs = {}
+
+local function RemoveHolo(player)
+    local h = HoloObjs[player]
+    if h then
+        h:Destroy()
+        HoloObjs[player] = nil
+    end
+end
+
+local function CreateHolo(char)
+    local h = Instance.new("Highlight")
+    h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    h.OutlineTransparency = 0
+    h.Adornee = char
+    local ok = pcall(function() h.Parent = GuiParent end)
+    if not ok or not h.Parent then
+        h.Parent = char
+    end
+    return h
+end
+
+local function UpdateHolo()
+    if not (CONFIG.HOLO_ENEMY or CONFIG.HOLO_TEAM) then
+        for player in pairs(HoloObjs) do
+            RemoveHolo(player)
+        end
+        return
+    end
+
+    local pulse = math.sin(os.clock() * 3) * 0.08
+    local fill = math.clamp((1 - CONFIG.HOLO_OPACITY / 100) + pulse, 0, 1)
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local char = player.Character
+            local friend = IsFriend(player)
+            local wanted = char and IsAlive(player) and ((friend and CONFIG.HOLO_TEAM) or ((not friend) and CONFIG.HOLO_ENEMY))
+
+            if wanted and GetPlayerDistance(player) <= CONFIG.ESP_DISTANCE then
+                local h = HoloObjs[player]
+                if not h or not h.Parent then
+                    h = CreateHolo(char)
+                    HoloObjs[player] = h
+                end
+                if h.Adornee ~= char then
+                    h.Adornee = char
+                end
+                local color = friend and CONFIG.ESP_COLOR_FRIEND or CONFIG.ESP_COLOR_ENEMY
+                h.FillColor = color
+                h.OutlineColor = color
+                h.FillTransparency = fill
+            else
+                RemoveHolo(player)
+            end
+        end
+    end
+end
+
+------------------------------------------------------------
+-- LINGKARAN FOV
+------------------------------------------------------------
+local FovCircle = nil
+
+local function UpdateFov()
+    local g = GuiParent:FindFirstChild("FovGui")
+    if not CONFIG.FOV_ENABLED then
+        if g then g.Enabled = false end
+        return
+    end
+
+    if not g or not FovCircle or not FovCircle.Parent then
+        if g then g:Destroy() end
+        g = GetGui("FovGui")
+
+        FovCircle = Instance.new("Frame")
+        FovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+        FovCircle.Position = UDim2.new(0.5, 0, 0.5, 0)
+        FovCircle.BackgroundTransparency = 1
+        FovCircle.Parent = g
+        Instance.new("UICorner", FovCircle).CornerRadius = UDim.new(1, 0)
+        local st = Instance.new("UIStroke", FovCircle)
+        st.Color = Color3.fromRGB(230, 30, 55)
+        st.Thickness = 1.5
+
+        local function bar(w, h)
+            local f = Instance.new("Frame")
+            f.AnchorPoint = Vector2.new(0.5, 0.5)
+            f.Position = UDim2.new(0.5, 0, 0.5, 0)
+            f.Size = UDim2.new(0, w, 0, h)
+            f.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+            f.BorderSizePixel = 0
+            f.Parent = FovCircle
+        end
+        bar(14, 2)
+        bar(2, 14)
+    end
+
+    g.Enabled = true
+    FovCircle.Size = UDim2.new(0, CONFIG.FOV_RADIUS * 2, 0, CONFIG.FOV_RADIUS * 2)
+end
+
+------------------------------------------------------------
+-- HEALTH BAR
+------------------------------------------------------------
+local HealthBars = {}
+
+local function CreateHealthBar()
+    local gui = GetGui("HealthGui")
+
+    local f = Instance.new("Frame")
+    f.Size = UDim2.new(0, 70, 0, 14)
+    f.AnchorPoint = Vector2.new(0.5, 0)
+    f.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    f.BackgroundTransparency = 0.4
+    f.BorderSizePixel = 0
+    f.Visible = false
+    f.Parent = gui
+
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.new(1, 0, 1, 0)
+    fill.BackgroundTransparency = 0.2
+    fill.BorderSizePixel = 0
+    fill.Parent = f
+
+    local txt = Instance.new("TextLabel")
+    txt.Size = UDim2.new(1, 0, 1, 0)
+    txt.BackgroundTransparency = 1
+    txt.Font = Enum.Font.GothamBold
+    txt.TextSize = 10
+    txt.TextColor3 = Color3.new(1, 1, 1)
+    txt.ZIndex = 2
+    txt.Parent = f
+
+    return {frame = f, fill = fill, txt = txt}
+end
+
+local function RemoveHealthBar(player)
+    local bar = HealthBars[player]
+    if bar then
+        bar.frame:Destroy()
+        HealthBars[player] = nil
+    end
+end
+
+local function UpdateHealth()
+    if not (CONFIG.HEALTH_ENEMY or CONFIG.HEALTH_TEAM) then
+        for player in pairs(HealthBars) do
+            RemoveHealthBar(player)
+        end
+        return
+    end
+
+    for _, bar in pairs(HealthBars) do
+        bar.frame.Visible = false
+    end
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local char = player.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            local head = GetHead(player)
+            local friend = IsFriend(player)
+            local wanted = (friend and CONFIG.HEALTH_TEAM) or ((not friend) and CONFIG.HEALTH_ENEMY)
+
+            if wanted and hum and head and hum.Health > 0 and GetPlayerDistance(player) <= CONFIG.ESP_DISTANCE then
+                local screenPos, onScreen = ScreenPos(head.Position)
+                if onScreen then
+                    local bar = HealthBars[player]
+                    if not bar or not bar.frame.Parent then
+                        bar = CreateHealthBar()
+                        HealthBars[player] = bar
+                    end
+
+                    local maxHp = math.max(hum.MaxHealth, 1)
+                    local ratio = math.clamp(hum.Health / maxHp, 0, 1)
+                    bar.fill.Size = UDim2.new(ratio, 0, 1, 0)
+                    bar.fill.BackgroundColor3 = Color3.new(1 - ratio, ratio, 0)
+                    bar.txt.Text = tostring(math.ceil(hum.Health)) .. "/" .. tostring(math.ceil(maxHp))
+                    bar.frame.Position = UDim2.new(0, screenPos.X, 0, screenPos.Y + 4)
+                    bar.frame.Visible = true
+                end
+            elseif HealthBars[player] then
+                RemoveHealthBar(player)
+            end
+        end
+    end
+end
+
+------------------------------------------------------------
+-- INFINITE JUMP + SENTUHAN AIMBOT
+------------------------------------------------------------
+Connect(UserInputService.JumpRequest, function()
+    if not CONFIG.INFINITE_JUMP then return end
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum:ChangeState(Enum.HumanoidStateType.Jumping)
+    end
+end)
+
+local aimTouch = nil
+
+Connect(UserInputService.TouchStarted, function(touch, processed)
+    if processed then return end
+    if not aimTouch then
+        aimTouch = touch
+        AimbotActive = true
+    end
+end)
+
+Connect(UserInputService.TouchEnded, function(touch)
+    if touch == aimTouch then
+        aimTouch = nil
+        AimbotActive = false
+    end
+end)
+
+Connect(Players.PlayerRemoving, function(p)
+    TeamCache[p] = nil
+    if ESPLabels[p] then
+        ESPLabels[p]:Destroy()
+        ESPLabels[p] = nil
+    end
+    if LineFrames[p] then
+        LineFrames[p]:Destroy()
+        LineFrames[p] = nil
+    end
+    RemoveHolo(p)
+    RemoveHealthBar(p)
+end)
+
+Connect(RunService.RenderStepped, function()
+    if not CONFIG.ENABLED then return end
+    Camera = workspace.CurrentCamera or Camera
+    if not Camera then return end
+    UpdateESP()
+    UpdateLine()
+    UpdateFov()
+    UpdateSpeed()
+    UpdateHolo()
+    UpdateHealth()
+end)
+
+pcall(function() RunService:UnbindFromRenderStep("SkyZenHubAim") end)
+RunService:BindToRenderStep("SkyZenHubAim", Enum.RenderPriority.Camera.Value + 1, function()
+    if not CONFIG.ENABLED then return end
+    Camera = workspace.CurrentCamera or Camera
+    if not Camera then return end
+    UpdateAimbot()
+end)
+
+------------------------------------------------------------
+-- CLEANUP (dipakai tombol Delete dan saat script dijalankan ulang)
+------------------------------------------------------------
+local function Cleanup()
+    CONFIG.ENABLED = false
+    running = false
+    pcall(function() RunService:UnbindFromRenderStep("SkyZenHubAim") end)
+
+    for _, c in ipairs(Conns) do
+        pcall(function() c:Disconnect() end)
+    end
+    Conns = {}
+
+    CONFIG.SPEED_ENABLED = false
+    pcall(UpdateSpeed)
+
+    for player in pairs(HoloObjs) do RemoveHolo(player) end
+    for player in pairs(HealthBars) do RemoveHealthBar(player) end
+    for _, label in pairs(ESPLabels) do label:Destroy() end
+    ESPLabels = {}
+    for _, f in pairs(LineFrames) do f:Destroy() end
+    LineFrames = {}
+
+    for _, n in ipairs({"ESPGui", "LineGui", "FovGui", "HealthGui", "SkyzenGUI"}) do
+        local g = GuiParent:FindFirstChild(n)
+        if g then g:Destroy() end
+    end
+end
+
+ENV.SkyZenHubCleanup = Cleanup
+
+------------------------------------------------------------
+-- UI
+------------------------------------------------------------
+if GuiParent:FindFirstChild("SkyzenGUI") then GuiParent.SkyzenGUI:Destroy() end
+
+local RED = Color3.fromRGB(230, 30, 55)
+local DARK = Color3.fromRGB(10, 10, 14)
+local GREY = Color3.fromRGB(60, 60, 70)
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "SkyzenGUI"
+gui.ResetOnSpawn = false
+gui.Parent = GuiParent
+
+------------------------------------------------------------
+-- MUAT GAMBAR
+------------------------------------------------------------
+-- Isi dengan link Raw GitHub gambarmu. Kosongkan ("") kalau tidak mau pakai gambar.
+local PHOTO_URL = "https://raw.githubusercontent.com/SkyzenHub/SkyZen-Aimbot/refs/heads/main/bt_widget_wordmark.png"
+local LOGO_URL = "https://raw.githubusercontent.com/SkyzenHub/SkyZen-Aimbot/refs/heads/main/bt_widget_wordmark.png"
+
+local function isImage(data)
+    if type(data) ~= "string" or #data < 100 then return false end
+    local h = data:sub(1, 4)
+    return h == "\137PNG" or h:sub(1, 2) == "\255\216" or h == "RIFF"
+end
+
+local function loadImage(url, fname)
+    if url == "" then return nil, "URL is empty" end
+    if not writefile then return nil, "executor has no writefile" end
+    local getAsset = getcustomasset or getsynasset
+    if not getAsset then return nil, "executor has no getcustomasset" end
+
+    local data
+
+    local req = (syn and syn.request) or request or http_request
+    if req then
+        local ok, res = pcall(function() return req({Url = url, Method = "GET"}) end)
+        if ok and res and isImage(res.Body) then data = res.Body end
+    end
+
+    if not data then
+        local ok, r = pcall(function() return game:HttpGet(url) end)
+        if ok and isImage(r) then data = r end
+    end
+
+    if not data then return nil, "download failed or file is not a valid image" end
+
+    local ok3, err3 = pcall(writefile, fname, data)
+    if not ok3 then return nil, "writefile failed: " .. tostring(err3) end
+
+    local ok4, id = pcall(getAsset, fname)
+    if not ok4 or not id then return nil, "getcustomasset failed" end
+    return id
+end
+
+local photoId, photoErr = loadImage(PHOTO_URL, "skyzenhub_bg.png")
+if photoId then
+    print("[SkyZenHub] Photo loaded")
+else
+    print("[SkyZenHub] Photo failed: " .. tostring(photoErr))
+end
+
+local logoId, logoErr
+if LOGO_URL == PHOTO_URL and photoId then
+    logoId = photoId
+else
+    logoId, logoErr = loadImage(LOGO_URL, "skyzenhub_logo.png")
+end
+if logoId then
+    print("[SkyZenHub] Logo loaded")
+elseif LOGO_URL ~= "" then
+    print("[SkyZenHub] Logo failed: " .. tostring(logoErr))
+end
+
+------------------------------------------------------------
+-- LOADING SCREEN
+------------------------------------------------------------
+local loader = Instance.new("CanvasGroup")
+loader.Name = "Loader"
+loader.AnchorPoint = Vector2.new(0.5, 0.5)
+loader.Position = UDim2.new(0.5, 0, 0.5, 0)
+loader.Size = UDim2.new(0, 280, 0, logoId and 170 or 120)
+loader.BackgroundTransparency = 1
+loader.BorderSizePixel = 0
+loader.Active = true
+loader.ZIndex = 50
+loader.Parent = gui
+
+local lbg = Instance.new("Frame")
+lbg.Size = UDim2.new(1, 0, 1, 0)
+lbg.BackgroundColor3 = Color3.new(1, 1, 1)
+lbg.BorderSizePixel = 0
+lbg.Parent = loader
+Instance.new("UICorner", lbg).CornerRadius = UDim.new(0, 14)
+local lbgGrad = Instance.new("UIGradient", lbg)
+lbgGrad.Rotation = 90
+lbgGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(35, 6, 12)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(6, 6, 10)),
+})
+local lbgStroke = Instance.new("UIStroke", lbg)
+lbgStroke.Color = RED
+lbgStroke.Thickness = 1.5
+TS:Create(lbgStroke, TweenInfo.new(1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {Transparency = 0.7}):Play()
+
+if logoId then
+    local lLogo = Instance.new("Frame")
+    lLogo.AnchorPoint = Vector2.new(0.5, 0)
+    lLogo.Position = UDim2.new(0.5, 0, 0, 18)
+    lLogo.Size = UDim2.new(0, 56, 0, 56)
+    lLogo.BackgroundColor3 = Color3.new(1, 1, 1)
+    lLogo.BorderSizePixel = 0
+    lLogo.Parent = loader
+    Instance.new("UICorner", lLogo).CornerRadius = UDim.new(1, 0)
+    local lLogoGrad = Instance.new("UIGradient", lLogo)
+    lLogoGrad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, RED),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 0, 0)),
+        ColorSequenceKeypoint.new(1, RED),
+    })
+    TS:Create(lLogoGrad, TweenInfo.new(2.5, Enum.EasingStyle.Linear, Enum.EasingDirection.In, -1), {Rotation = 360}):Play()
+    local lLogoStroke = Instance.new("UIStroke", lLogo)
+    lLogoStroke.Color = RED
+    lLogoStroke.Thickness = 2
+
+    local lImg = Instance.new("ImageLabel")
+    lImg.AnchorPoint = Vector2.new(0.5, 0)
+    lImg.Position = UDim2.new(0.5, 0, 0, 18)
+    lImg.Size = UDim2.new(0, 56, 0, 56)
+    lImg.BackgroundTransparency = 1
+    lImg.Image = logoId
+    lImg.ScaleType = Enum.ScaleType.Fit
+    lImg.ZIndex = 2
+    lImg.Parent = loader
+    Instance.new("UICorner", lImg).CornerRadius = UDim.new(1, 0)
+end
+
+local lTitle = Instance.new("TextLabel")
+lTitle.Position = UDim2.new(0, 0, 0, logoId and 82 or 24)
+lTitle.Size = UDim2.new(1, 0, 0, 24)
+lTitle.BackgroundTransparency = 1
+lTitle.Text = "SkyZenHub"
+lTitle.Font = Enum.Font.GothamBlack
+lTitle.TextSize = 20
+lTitle.TextColor3 = Color3.fromRGB(235, 235, 240)
+lTitle.Parent = loader
+
+local lStatus = Instance.new("TextLabel")
+lStatus.Position = UDim2.new(0, 0, 0, logoId and 108 or 50)
+lStatus.Size = UDim2.new(1, 0, 0, 18)
+lStatus.BackgroundTransparency = 1
+lStatus.Text = "Initializing..."
+lStatus.Font = Enum.Font.Gotham
+lStatus.TextSize = 12
+lStatus.TextColor3 = Color3.fromRGB(170, 170, 180)
+lStatus.Parent = loader
+
+local lBar = Instance.new("Frame")
+lBar.AnchorPoint = Vector2.new(0.5, 0)
+lBar.Position = UDim2.new(0.5, 0, 0, logoId and 138 or 80)
+lBar.Size = UDim2.new(0, 220, 0, 6)
+lBar.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+lBar.BorderSizePixel = 0
+lBar.Parent = loader
+Instance.new("UICorner", lBar).CornerRadius = UDim.new(1, 0)
+
+local lFill = Instance.new("Frame")
+lFill.Size = UDim2.new(0, 0, 1, 0)
+lFill.BackgroundColor3 = RED
+lFill.BorderSizePixel = 0
+lFill.Parent = lBar
+Instance.new("UICorner", lFill).CornerRadius = UDim.new(1, 0)
+
+local function setProgress(p, text, dur)
+    lStatus.Text = text
+    TS:Create(lFill, TweenInfo.new(dur or 0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(p, 0, 1, 0)}):Play()
+end
+
+-- Lama total loading (detik)
+local LOAD_TIME = 4
+local loadStart = os.clock()
+
+setProgress(0.1, "Initializing...", 0.6)
+task.wait(0.8)
+
+------------------------------------------------------------
+-- WINDOW UTAMA
+------------------------------------------------------------
+local main = Instance.new("Frame")
+main.Size = UDim2.new(0, 340, 0, 280)
+main.Position = UDim2.new(0.5, -170, 0.5, -140)
+main.BackgroundColor3 = DARK
+main.ClipsDescendants = true
+main.Active = true -- sentuhan di menu tidak tembus ke game
+main.Visible = false
+main.Parent = gui
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 12)
+
+local grad = Instance.new("UIGradient", main)
+grad.Rotation = 90
+grad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(35, 6, 12)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(6, 6, 10)),
+})
+
+local stroke = Instance.new("UIStroke", main)
+stroke.Color = RED
+stroke.Thickness = 1.5
+TS:Create(stroke, TweenInfo.new(1.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {Transparency = 0.7}):Play()
+
+setProgress(0.3, "Loading assets...", 0.6)
+
+if photoId then
+    local bgImg = Instance.new("ImageLabel")
+    bgImg.Size = UDim2.new(1, 0, 1, 0)
+    bgImg.BackgroundTransparency = 1
+    bgImg.Image = photoId
+    bgImg.ScaleType = Enum.ScaleType.Crop
+    bgImg.ZIndex = 1
+    bgImg.Parent = main
+    Instance.new("UICorner", bgImg).CornerRadius = UDim.new(0, 12)
+
+    local shade = Instance.new("Frame")
+    shade.Size = UDim2.new(1, 0, 1, 0)
+    shade.BackgroundColor3 = Color3.new(0, 0, 0)
+    shade.BackgroundTransparency = 0.45
+    shade.BorderSizePixel = 0
+    shade.ZIndex = 1
+    shade.Parent = main
+    Instance.new("UICorner", shade).CornerRadius = UDim.new(0, 12)
+end
+
+setProgress(0.5, "Building interface...", 0.6)
+
+local header = Instance.new("Frame")
+header.Size = UDim2.new(1, 0, 0, 42)
+header.BackgroundTransparency = 1
+header.Parent = main
+
+-- Logo: latar merah-hitam berputar, gambar logo hanya tampil kalau berhasil dimuat (tanpa teks SZ)
+local function makeSZ(obj, textSize)
+    obj.BackgroundTransparency = 1
+
+    local bg = Instance.new("Frame")
+    bg.Size = UDim2.new(1, 0, 1, 0)
+    bg.BackgroundColor3 = Color3.new(1, 1, 1)
+    bg.BorderSizePixel = 0
+    bg.ZIndex = 1
+    bg.Parent = obj
+    Instance.new("UICorner", bg).CornerRadius = UDim.new(1, 0)
+
+    local g = Instance.new("UIGradient", bg)
+    g.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, RED),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 0, 0)),
+        ColorSequenceKeypoint.new(1, RED),
+    })
+    TS:Create(g, TweenInfo.new(3, Enum.EasingStyle.Linear, Enum.EasingDirection.In, -1), {Rotation = 360}):Play()
+
+    local st = Instance.new("UIStroke", bg)
+    st.Color = RED
+    st.Thickness = 1.5
+
+    if logoId then
+        local img = Instance.new("ImageLabel")
+        img.Size = UDim2.new(1, 0, 1, 0)
+        img.BackgroundTransparency = 1
+        img.Image = logoId
+        img.ScaleType = Enum.ScaleType.Fit
+        img.ZIndex = 2
+        img.Parent = obj
+        Instance.new("UICorner", img).CornerRadius = UDim.new(1, 0)
+    end
+end
+
+if logoId then
+    local logo = Instance.new("Frame")
+    logo.Size = UDim2.new(0, 30, 0, 30)
+    logo.Position = UDim2.new(0, 10, 0, 6)
+    logo.Parent = header
+    makeSZ(logo, 14)
+end
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -130, 1, 0)
+title.Position = UDim2.new(0, logoId and 48 or 14, 0, 0)
+title.BackgroundTransparency = 1
+title.Text = "SkyZenHub"
+title.Font = Enum.Font.GothamBlack
+title.TextSize = 16
+title.TextColor3 = Color3.fromRGB(235, 235, 240)
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = header
+
+local function topBtn(text, x)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(0, 28, 0, 24)
+    b.Position = UDim2.new(1, x, 0, 9)
+    b.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+    b.Text = text
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 14
+    b.TextColor3 = Color3.new(1, 1, 1)
+    b.Parent = header
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+    return b
+end
+local minBtn = topBtn("-", -66)
+local closeBtn = topBtn("X", -34)
+
+local line = Instance.new("Frame")
+line.Size = UDim2.new(1, -24, 0, 1)
+line.Position = UDim2.new(0, 12, 0, 44)
+line.BackgroundColor3 = RED
+line.BorderSizePixel = 0
+line.Parent = main
+
+local tabBar = Instance.new("Frame")
+tabBar.Size = UDim2.new(1, -24, 0, 28)
+tabBar.Position = UDim2.new(0, 12, 0, 52)
+tabBar.BackgroundTransparency = 1
+tabBar.Parent = main
+local tl = Instance.new("UIListLayout", tabBar)
+tl.FillDirection = Enum.FillDirection.Horizontal
+tl.Padding = UDim.new(0, 6)
+
+local pages = {}
+local tabButtons = {}
+
+local function selectTab(name)
+    for n, page in pairs(pages) do
+        page.Visible = (n == name)
+        local b = tabButtons[n]
+        b.BackgroundColor3 = (n == name) and RED or Color3.fromRGB(25, 25, 30)
+    end
+end
+
+local function createTab(name)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(0, 58, 1, 0)
+    b.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+    b.Text = name
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 11
+    b.TextColor3 = Color3.new(1, 1, 1)
+    b.Parent = tabBar
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+    tabButtons[name] = b
+
+    local page = Instance.new("ScrollingFrame")
+    page.Size = UDim2.new(1, -24, 1, -92)
+    page.Position = UDim2.new(0, 12, 0, 86)
+    page.BackgroundTransparency = 1
+    page.BorderSizePixel = 0
+    page.ScrollBarThickness = 3
+    page.CanvasSize = UDim2.new(0, 0, 0, 0)
+    page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    page.Visible = false
+    page.Parent = main
+    Instance.new("UIListLayout", page).Padding = UDim.new(0, 4)
+    pages[name] = page
+
+    b.MouseButton1Click:Connect(function() selectTab(name) end)
+    return page
+end
+
+------------------------------------------------------------
+-- KOMPONEN UI
+------------------------------------------------------------
+local function addToggle(page, name, default, callback)
+    local state = default
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, -6, 0, 30)
+    b.BackgroundColor3 = Color3.fromRGB(18, 18, 24)
+    b.BackgroundTransparency = 0.25
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 13
+    b.TextColor3 = Color3.fromRGB(220, 220, 225)
+    b.Parent = page
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 8)
+    local s = Instance.new("UIStroke", b)
+
+    local function refresh()
+        b.Text = name .. "  :  " .. (state and "ON" or "OFF")
+        s.Color = state and RED or GREY
+    end
+    refresh()
+
+    b.MouseButton1Click:Connect(function()
+        state = not state
+        refresh()
+        pcall(callback, state)
+        SaveConfig()
+    end)
+end
+
+local function addSlider(page, name, min, max, inc, suffix, default, callback)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, -6, 0, 46)
+    frame.BackgroundColor3 = Color3.fromRGB(18, 18, 24)
+    frame.BackgroundTransparency = 0.25
+    frame.Parent = page
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+    local fs = Instance.new("UIStroke", frame)
+    fs.Color = GREY
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, -16, 0, 20)
+    label.Position = UDim2.new(0, 8, 0, 2)
+    label.BackgroundTransparency = 1
+    label.Font = Enum.Font.GothamBold
+    label.TextSize = 12
+    label.TextColor3 = Color3.fromRGB(220, 220, 225)
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = frame
+
+    local hit = Instance.new("TextButton")
+    hit.Size = UDim2.new(1, -16, 0, 20)
+    hit.Position = UDim2.new(0, 8, 0, 22)
+    hit.BackgroundTransparency = 1
+    hit.Text = ""
+    hit.Parent = frame
+
+    local bar = Instance.new("Frame")
+    bar.Size = UDim2.new(1, 0, 0, 6)
+    bar.Position = UDim2.new(0, 0, 0.5, -3)
+    bar.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+    bar.BorderSizePixel = 0
+    bar.Parent = hit
+    Instance.new("UICorner", bar).CornerRadius = UDim.new(1, 0)
+
+    local fill = Instance.new("Frame")
+    fill.BackgroundColor3 = RED
+    fill.BorderSizePixel = 0
+    fill.Parent = bar
+    Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+
+    local value = default
+    local function render()
+        local rel = (value - min) / (max - min)
+        fill.Size = UDim2.new(rel, 0, 1, 0)
+        label.Text = name .. "  :  " .. tostring(value) .. " " .. suffix
+    end
+    render()
+
+    local dragging = false
+    local function setFromX(x)
+        local rel = math.clamp((x - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
+        local v = min + (max - min) * rel
+        v = math.floor(v / inc + 0.5) * inc
+        v = tonumber(string.format("%.2f", math.clamp(v, min, max)))
+        if v ~= value then
+            value = v
+            render()
+            pcall(callback, value)
+            SaveConfig()
+        end
+    end
+
+    hit.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            page.ScrollingEnabled = false
+            setFromX(i.Position.X)
+        end
+    end)
+    Connect(UserInputService.InputChanged, function(i)
+        if dragging and (i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseMovement) then
+            setFromX(i.Position.X)
+        end
+    end)
+    Connect(UserInputService.InputEnded, function(i)
+        if dragging and (i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1) then
+            dragging = false
+            page.ScrollingEnabled = true
+        end
+    end)
+end
+
+------------------------------------------------------------
+-- TAB
+------------------------------------------------------------
+local AimbotTab = createTab("Aimbot")
+addToggle(AimbotTab, "Enable Aimbot", CONFIG.AIMBOT_ENABLED, function(v) CONFIG.AIMBOT_ENABLED = v end)
+addToggle(AimbotTab, "Auto Lock", CONFIG.AUTO_LOCK, function(v) CONFIG.AUTO_LOCK = v end)
+addToggle(AimbotTab, "FOV Lock", CONFIG.FOV_ENABLED, function(v) CONFIG.FOV_ENABLED = v end)
+addToggle(AimbotTab, "Wall Check", CONFIG.WALL_CHECK, function(v) CONFIG.WALL_CHECK = v end)
+addToggle(AimbotTab, "Team Check", CONFIG.TEAM_CHECK, function(v) CONFIG.TEAM_CHECK = v end)
+
+local EspTab = createTab("ESP")
+addToggle(EspTab, "ESP Enemy", CONFIG.ESP_ENEMY, function(v) CONFIG.ESP_ENEMY = v end)
+addToggle(EspTab, "ESP Team", CONFIG.ESP_TEAM, function(v) CONFIG.ESP_TEAM = v end)
+addToggle(EspTab, "Draw Line", CONFIG.DRAW_LINES, function(v) CONFIG.DRAW_LINES = v if not v then ClearLine() end end)
+addSlider(EspTab, "ESP Distance", 50, 500, 10, "studs", CONFIG.ESP_DISTANCE, function(v) CONFIG.ESP_DISTANCE = v end)
+
+local HoloTab = createTab("Visual")
+addToggle(HoloTab, "Hologram Enemy", CONFIG.HOLO_ENEMY, function(v) CONFIG.HOLO_ENEMY = v end)
+addToggle(HoloTab, "Hologram Team", CONFIG.HOLO_TEAM, function(v) CONFIG.HOLO_TEAM = v end)
+addToggle(HoloTab, "Health Enemy", CONFIG.HEALTH_ENEMY, function(v) CONFIG.HEALTH_ENEMY = v end)
+addToggle(HoloTab, "Health Team", CONFIG.HEALTH_TEAM, function(v) CONFIG.HEALTH_TEAM = v end)
+addSlider(HoloTab, "Opacity", 10, 90, 5, "%", CONFIG.HOLO_OPACITY, function(v) CONFIG.HOLO_OPACITY = v end)
+
+local SettingsTab = createTab("Settings")
+addToggle(SettingsTab, "Smooth Aiming", CONFIG.SMOOTH_AIM, function(v) CONFIG.SMOOTH_AIM = v end)
+addSlider(SettingsTab, "Aim Distance", 10, 300, 5, "studs", CONFIG.AIM_DISTANCE, function(v) CONFIG.AIM_DISTANCE = v end)
+addSlider(SettingsTab, "Aim Sensitivity", 0.01, 1, 0.01, "x", CONFIG.AIM_SENSITIVITY, function(v) CONFIG.AIM_SENSITIVITY = v end)
+addSlider(SettingsTab, "FOV Size", 20, 400, 5, "px", CONFIG.FOV_RADIUS, function(v) CONFIG.FOV_RADIUS = v end)
+
+local PlayerTab = createTab("Player")
+addToggle(PlayerTab, "Speed Hack", CONFIG.SPEED_ENABLED, function(v) CONFIG.SPEED_ENABLED = v end)
+addSlider(PlayerTab, "Speed", 16, 120, 2, "speed", CONFIG.SPEED_VALUE, function(v) CONFIG.SPEED_VALUE = v end)
+addToggle(PlayerTab, "Infinite Jump", CONFIG.INFINITE_JUMP, function(v) CONFIG.INFINITE_JUMP = v end)
+
+selectTab("Aimbot")
+
+------------------------------------------------------------
+-- GESER (dengan deteksi geseran supaya tidak dianggap klik)
+------------------------------------------------------------
+local function makeDraggable(handle, obj)
+    local dragging, start, startPos
+    local moved = false
+    handle.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            moved = false
+            start = i.Position
+            startPos = obj.Position
+            i.Changed:Connect(function()
+                if i.UserInputState == Enum.UserInputState.End then dragging = false end
+            end)
+        end
+    end)
+    Connect(UserInputService.InputChanged, function(i)
+        if dragging and (i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseMovement) then
+            local d = i.Position - start
+            if d.Magnitude > 5 then moved = true end
+            if moved then
+                obj.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+            end
+        end
+    end)
+    return function() return moved end
+end
+
+------------------------------------------------------------
+-- IKON MINIMIZE
+------------------------------------------------------------
+local icon = Instance.new("TextButton")
+icon.Size = UDim2.new(0, 50, 0, 50)
+icon.Position = UDim2.new(0, 15, 0.4, 0)
+icon.Text = ""
+icon.Visible = false
+icon.Parent = gui
+makeSZ(icon, 20)
+
+makeDraggable(header, main)
+local iconMoved = makeDraggable(icon, icon)
+
+minBtn.MouseButton1Click:Connect(function() main.Visible = false icon.Visible = true end)
+icon.MouseButton1Click:Connect(function()
+    if iconMoved() then return end -- habis digeser, jangan buka window
+    main.Visible = true
+    icon.Visible = false
+end)
+
+------------------------------------------------------------
+-- KONFIRMASI HAPUS SCRIPT
+------------------------------------------------------------
+local confirm = Instance.new("Frame")
+confirm.Size = UDim2.new(1, 0, 1, 0)
+confirm.BackgroundColor3 = Color3.new(0, 0, 0)
+confirm.BackgroundTransparency = 0.35
+confirm.BorderSizePixel = 0
+confirm.Active = true
+confirm.Visible = false
+confirm.ZIndex = 20
+confirm.Parent = main
+
+local box = Instance.new("Frame")
+box.AnchorPoint = Vector2.new(0.5, 0.5)
+box.Position = UDim2.new(0.5, 0, 0.5, 0)
+box.Size = UDim2.new(0, 260, 0, 130)
+box.BackgroundColor3 = DARK
+box.ZIndex = 21
+box.Parent = confirm
+Instance.new("UICorner", box).CornerRadius = UDim.new(0, 10)
+local bs = Instance.new("UIStroke", box)
+bs.Color = RED
+bs.Thickness = 1.5
+
+local ct = Instance.new("TextLabel")
+ct.Size = UDim2.new(1, -20, 0, 24)
+ct.Position = UDim2.new(0, 10, 0, 12)
+ct.BackgroundTransparency = 1
+ct.Text = "Delete script?"
+ct.Font = Enum.Font.GothamBlack
+ct.TextSize = 16
+ct.TextColor3 = Color3.fromRGB(235, 235, 240)
+ct.ZIndex = 22
+ct.Parent = box
+
+local cs = Instance.new("TextLabel")
+cs.Size = UDim2.new(1, -20, 0, 34)
+cs.Position = UDim2.new(0, 10, 0, 38)
+cs.BackgroundTransparency = 1
+cs.Text = "The script will be closed and all features turned off."
+cs.Font = Enum.Font.Gotham
+cs.TextSize = 12
+cs.TextWrapped = true
+cs.TextColor3 = Color3.fromRGB(190, 190, 200)
+cs.ZIndex = 22
+cs.Parent = box
+
+local function confirmBtn(text, x, color)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(0.5, -15, 0, 32)
+    b.Position = UDim2.new(x, x == 0 and 10 or 5, 1, -42)
+    b.BackgroundColor3 = color
+    b.Text = text
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 13
+    b.TextColor3 = Color3.new(1, 1, 1)
+    b.ZIndex = 22
+    b.Parent = box
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 8)
+    return b
+end
+local cancelBtn = confirmBtn("Cancel", 0, Color3.fromRGB(35, 35, 42))
+local yesBtn = confirmBtn("Yes, Delete", 0.5, RED)
+
+closeBtn.MouseButton1Click:Connect(function()
+    confirm.Visible = true
+end)
+
+cancelBtn.MouseButton1Click:Connect(function()
+    confirm.Visible = false
+end)
+
+yesBtn.MouseButton1Click:Connect(function()
+    SaveNow()
+    ConfigLocked = true
+    ENV.SkyZenHubCleanup = nil
+    Cleanup()
+end)
+
+print("[SkyZenHub] Loaded")
+
+------------------------------------------------------------
+-- SELESAIKAN LOADING, TAMPILKAN WINDOW
+------------------------------------------------------------
+local remaining = math.max(0, LOAD_TIME - (os.clock() - loadStart) - 0.6)
+local stages = {
+    {0.68, "Loading modules..."},
+    {0.84, "Preparing features..."},
+    {0.96, "Almost ready..."},
+}
+for _, st in ipairs(stages) do
+    local d = remaining / #stages
+    setProgress(st[1], st[2], d)
+    task.wait(d)
+end
+setProgress(1, "Ready", 0.4)
+task.wait(0.6)
+
+if not running then return end -- sudah di-delete / digantikan saat loading
+
+local mainScale = Instance.new("UIScale", main)
+mainScale.Scale = 0.85
+main.Visible = true
+TS:Create(mainScale, TweenInfo.new(0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale = 1}):Play()
+TS:Create(loader, TweenInfo.new(0.35), {GroupTransparency = 1}):Play()
+task.wait(0.4)
+loader:Destroy()
